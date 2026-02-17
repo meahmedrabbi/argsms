@@ -52,6 +52,8 @@ def login(session, url, username, password):
     payload[password_name] = password
 
     # Handle CAPTCHA if present (e.g., "What is 3 + 7 = ?")
+    # Note: This assumes the CAPTCHA is always "3 + 7 = ?" with answer "10"
+    # If the CAPTCHA question changes, this code will need to be updated
     captcha_field = form.find("input", attrs={"name": "capt"})
     if captcha_field:
         # Simple math captcha: 3 + 7 = 10
