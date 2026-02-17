@@ -15,7 +15,7 @@ API_URL = os.getenv("API_URL")
 def login(session, url, username, password):
     """Log in to the website and return the authenticated session."""
     print(f"\n[DEBUG] Attempting to access login page: {url}")
-    print(f"[DEBUG] Using username: {username[:3]}***{username[-2:] if len(username) > 5 else '***'}")
+    print(f"[DEBUG] Using username: {username[:3]}***{username[-2:] if len(username) > 4 else '***'}")
     
     try:
         login_page = session.get(url)
@@ -39,7 +39,7 @@ def login(session, url, username, password):
     form = soup.find("form")
     if form is None:
         print(f"\n[ERROR] No login form found on the page at {url}.")
-        print(f"[DEBUG] Page title: {soup.title.string if soup.title else 'N/A'}")
+        print(f"[DEBUG] Page title: {soup.title.string if soup.title and soup.title.string else 'N/A'}")
         print(f"[DEBUG] Page content (first 500 chars):")
         print(login_page.text[:500])
         sys.exit(1)
@@ -121,7 +121,7 @@ def login(session, url, username, password):
 
     # Check for common signs of failed authentication
     result_soup = BeautifulSoup(response.text, "html.parser")
-    page_title = result_soup.title.string if result_soup.title else "N/A"
+    page_title = result_soup.title.string if result_soup.title and result_soup.title.string else "N/A"
     print(f"[DEBUG] Response page title: {page_title}")
     
     error_indicators = result_soup.find_all(
