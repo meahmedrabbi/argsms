@@ -16,6 +16,7 @@ def login(session, url, username, password):
     """Log in to the website and return the authenticated session."""
     print(f"\n[DEBUG] Attempting to access login page: {url}")
     print(f"[DEBUG] Using username: {username[:3]}***{username[-2:] if len(username) > 4 else '***'}")
+    print(f"[DEBUG] Request headers: {dict(session.headers)}")
     
     try:
         login_page = session.get(url)
@@ -165,6 +166,18 @@ def main():
         sys.exit(1)
 
     session = requests.Session()
+    
+    # Add browser-like headers to avoid 403 Forbidden errors
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
+    
+    print(f"[DEBUG] Session headers configured: {dict(session.headers)}\n")
 
     print(f"Logging in to {API_URL} ...")
     login_response = login(session, API_URL, LOGIN_USERNAME, PASSWORD)
