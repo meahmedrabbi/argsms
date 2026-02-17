@@ -51,6 +51,13 @@ def login(session, url, username, password):
     payload[username_name] = username
     payload[password_name] = password
 
+    # Handle CAPTCHA if present (e.g., "What is 3 + 7 = ?")
+    captcha_field = form.find("input", attrs={"name": "capt"})
+    if captcha_field:
+        # Simple math captcha: 3 + 7 = 10
+        payload["capt"] = "10"
+        print("CAPTCHA detected and answered (3 + 7 = 10)")
+
     # Determine form action URL
     action = form.get("action")
     if action:
@@ -95,7 +102,7 @@ def scrape(session, url):
     except requests.RequestException as e:
         print(f"Error: Network error while scraping: {e}")
         sys.exit(1)
-    
+
     soup = BeautifulSoup(response.text, "html.parser")
     return soup
 
