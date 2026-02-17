@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 import requests
@@ -10,6 +11,44 @@ load_dotenv()
 LOGIN_USERNAME = os.getenv("LOGIN_USERNAME")
 PASSWORD = os.getenv("PASSWORD")
 API_URL = os.getenv("API_URL")
+
+
+def solve_captcha(captcha_text):
+    """
+    Parse and solve a simple math CAPTCHA.
+    
+    Expected format: "What is X + Y = ?" or similar
+    Returns the calculated answer as a string, or None if parsing fails.
+    """
+    # Try to find a pattern like "X + Y" or "X - Y" or "X * Y" in the text
+    # Common patterns: "What is 3 + 7 = ?", "4 + 10 = ?", etc.
+    
+    # Match patterns like: number operator number
+    pattern = r'(\d+)\s*([+\-*/])\s*(\d+)'
+    match = re.search(pattern, captcha_text)
+    
+    if match:
+        num1 = int(match.group(1))
+        operator = match.group(2)
+        num2 = int(match.group(3))
+        
+        # Calculate based on operator
+        if operator == '+':
+            result = num1 + num2
+        elif operator == '-':
+            result = num1 - num2
+        elif operator == '*':
+            result = num1 * num2
+        elif operator == '/':
+            result = num1 // num2  # Integer division
+        else:
+            return None
+        
+        print(f"[DEBUG] Parsed CAPTCHA: {num1} {operator} {num2} = {result}")
+        return str(result)
+    
+    print(f"[WARNING] Could not parse CAPTCHA question: '{captcha_text}'")
+    return None
 
 
 def login(session, url, username, password):
@@ -72,15 +111,44 @@ def login(session, url, username, password):
     payload[username_name] = username
     payload[password_name] = password
 
-    # Handle CAPTCHA if present (e.g., "What is 3 + 7 = ?")
-    # Note: This assumes the CAPTCHA is always "3 + 7 = ?" with answer "10"
-    # If the CAPTCHA question changes, this code will need to be updated
+    # Handle CAPTCHA if present - parse the question and solve it dynamically
     captcha_field = form.find("input", attrs={"name": "capt"})
     if captcha_field:
-        # Simple math captcha: 3 + 7 = 10
-        payload["capt"] = "10"
         print("[DEBUG] CAPTCHA field detected: name='capt'")
-        print("[DEBUG] CAPTCHA answer set to: '10' (for question: 3 + 7 = ?)")
+        
+        # Find the CAPTCHA question text in the form
+        # It's typically in a label or text near the captcha input field
+        captcha_question = None
+        
+        # Look for the captcha field's parent container
+        captcha_container = captcha_field.find_parent("div")
+        if captcha_container:
+            # Get all text from the container
+            captcha_text = captcha_container.get_text(strip=True)
+            print(f"[DEBUG] CAPTCHA container text: '{captcha_text}'")
+            captcha_question = captcha_text
+        
+        # If not found in parent div, search the entire form for CAPTCHA-related text
+        if not captcha_question:
+            form_text = form.get_text(separator=" ", strip=True)
+            # Look for patterns like "What is X + Y = ?"
+            captcha_match = re.search(r'(What is.+?\?|[\d\s+\-*/]+\s*=\s*\?)', form_text)
+            if captcha_match:
+                captcha_question = captcha_match.group(1)
+                print(f"[DEBUG] Found CAPTCHA question in form: '{captcha_question}'")
+        
+        # Solve the CAPTCHA
+        if captcha_question:
+            captcha_answer = solve_captcha(captcha_question)
+            if captcha_answer:
+                payload["capt"] = captcha_answer
+                print(f"[DEBUG] CAPTCHA answer calculated: '{captcha_answer}'")
+            else:
+                print("[WARNING] Could not solve CAPTCHA, using default answer '10'")
+                payload["capt"] = "10"
+        else:
+            print("[WARNING] Could not find CAPTCHA question text, using default answer '10'")
+            payload["capt"] = "10"
     else:
         print("[DEBUG] No CAPTCHA field found in form")
 
