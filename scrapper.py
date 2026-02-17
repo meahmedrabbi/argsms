@@ -26,10 +26,13 @@ def debug_print(message):
 
 
 def save_cookies(session):
-    """Save session cookies to a file."""
+    """Save session cookies to a file with secure permissions."""
     try:
+        # Save cookies with restrictive file permissions (owner read/write only)
         with open(COOKIE_FILE, 'wb') as f:
             pickle.dump(session.cookies, f)
+        # Set secure file permissions (0o600 = owner read/write only)
+        os.chmod(COOKIE_FILE, 0o600)
         print(f"✓ Cookies saved to {COOKIE_FILE}")
     except Exception as e:
         print(f"[WARNING] Failed to save cookies: {e}")
@@ -39,8 +42,15 @@ def load_cookies(session):
     """Load cookies from file into the session."""
     try:
         if os.path.exists(COOKIE_FILE):
+            # Check file permissions for security
+            stat_info = os.stat(COOKIE_FILE)
+            # Warn if file permissions are too permissive
+            if stat_info.st_mode & 0o077:
+                print(f"[WARNING] Cookie file has insecure permissions. Consider running: chmod 600 {COOKIE_FILE}")
+            
             with open(COOKIE_FILE, 'rb') as f:
-                session.cookies.update(pickle.load(f))
+                cookies = pickle.load(f)
+            session.cookies.update(cookies)
             print(f"✓ Cookies loaded from {COOKIE_FILE}")
             return True
     except Exception as e:
@@ -48,7 +58,7 @@ def load_cookies(session):
     return False
 
 
-def check_cookies_valid(session, test_url):
+def are_cookies_valid(session, test_url):
     """Check if saved cookies are still valid by accessing a protected page."""
     try:
         response = session.get(test_url)
