@@ -14,8 +14,15 @@ API_URL = os.getenv("API_URL")
 
 def login(session, url, username, password):
     """Log in to the website and return the authenticated session."""
-    login_page = session.get(url)
-    login_page.raise_for_status()
+    try:
+        login_page = session.get(url)
+        login_page.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"Error: Failed to access login page. HTTP Status: {e.response.status_code}")
+        sys.exit(1)
+    except requests.RequestException as e:
+        print(f"Error: Network error while accessing login page: {e}")
+        sys.exit(1)
 
     soup = BeautifulSoup(login_page.text, "html.parser")
 
@@ -52,8 +59,15 @@ def login(session, url, username, password):
     else:
         action = url
 
-    response = session.post(action, data=payload)
-    response.raise_for_status()
+    try:
+        response = session.post(action, data=payload)
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"Error: Login failed. HTTP Status: {e.response.status_code}")
+        sys.exit(1)
+    except requests.RequestException as e:
+        print(f"Error: Network error during login: {e}")
+        sys.exit(1)
 
     # Check for common signs of failed authentication
     result_soup = BeautifulSoup(response.text, "html.parser")
@@ -72,8 +86,16 @@ def login(session, url, username, password):
 
 def scrape(session, url):
     """Scrape content from a page after login."""
-    response = session.get(url)
-    response.raise_for_status()
+    try:
+        response = session.get(url)
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"Error: Failed to scrape page. HTTP Status: {e.response.status_code}")
+        sys.exit(1)
+    except requests.RequestException as e:
+        print(f"Error: Network error while scraping: {e}")
+        sys.exit(1)
+    
     soup = BeautifulSoup(response.text, "html.parser")
     return soup
 
