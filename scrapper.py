@@ -12,6 +12,9 @@ LOGIN_USERNAME = os.getenv("LOGIN_USERNAME")
 PASSWORD = os.getenv("PASSWORD")
 API_URL = os.getenv("API_URL")
 
+# Default CAPTCHA answer to use if parsing fails
+DEFAULT_CAPTCHA_ANSWER = "10"
+
 
 def solve_captcha(captcha_text):
     """
@@ -40,6 +43,9 @@ def solve_captcha(captcha_text):
         elif operator == '*':
             result = num1 * num2
         elif operator == '/':
+            if num2 == 0:
+                print("[WARNING] Division by zero detected in CAPTCHA")
+                return None
             result = num1 // num2  # Integer division
         else:
             return None
@@ -131,8 +137,8 @@ def login(session, url, username, password):
         # If not found in parent div, search the entire form for CAPTCHA-related text
         if not captcha_question:
             form_text = form.get_text(separator=" ", strip=True)
-            # Look for patterns like "What is X + Y = ?"
-            captcha_match = re.search(r'(What is.+?\?|[\d\s+\-*/]+\s*=\s*\?)', form_text)
+            # Look for patterns like "What is X + Y = ?" or "X + Y = ?"
+            captcha_match = re.search(r'(What is.+?\?|\d+\s*[+\-*/]\s*\d+\s*=\s*\?)', form_text)
             if captcha_match:
                 captcha_question = captcha_match.group(1)
                 print(f"[DEBUG] Found CAPTCHA question in form: '{captcha_question}'")
@@ -144,11 +150,11 @@ def login(session, url, username, password):
                 payload["capt"] = captcha_answer
                 print(f"[DEBUG] CAPTCHA answer calculated: '{captcha_answer}'")
             else:
-                print("[WARNING] Could not solve CAPTCHA, using default answer '10'")
-                payload["capt"] = "10"
+                print(f"[WARNING] Could not solve CAPTCHA, using default answer '{DEFAULT_CAPTCHA_ANSWER}'")
+                payload["capt"] = DEFAULT_CAPTCHA_ANSWER
         else:
-            print("[WARNING] Could not find CAPTCHA question text, using default answer '10'")
-            payload["capt"] = "10"
+            print(f"[WARNING] Could not find CAPTCHA question text, using default answer '{DEFAULT_CAPTCHA_ANSWER}'")
+            payload["capt"] = DEFAULT_CAPTCHA_ANSWER
     else:
         print("[DEBUG] No CAPTCHA field found in form")
 
