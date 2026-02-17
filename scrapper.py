@@ -258,8 +258,12 @@ def main():
     login_response = login(session, API_URL, LOGIN_USERNAME, PASSWORD)
     print(f"Login response status: {login_response.status_code}")
 
-    # After login, scrape the landing page
-    soup = scrape(session, API_URL)
+    # After login, scrape the page we were redirected to (usually the dashboard)
+    # Use the final URL after any redirects, not the original login URL
+    dashboard_url = login_response.url
+    print(f"\n[DEBUG] Scraping dashboard at: {dashboard_url}")
+    
+    soup = scrape(session, dashboard_url)
     page_title = soup.title.string if soup.title and soup.title.string else "N/A"
     print("Page title:", page_title)
     print(soup.get_text(separator="\n", strip=True))
