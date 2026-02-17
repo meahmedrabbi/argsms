@@ -14,14 +14,23 @@ API_URL = os.getenv("API_URL")
 
 def login(session, url, username, password):
     """Log in to the website and return the authenticated session."""
+    print(f"\n[DEBUG] Attempting to access login page: {url}")
+    print(f"[DEBUG] Using username: {username[:3]}***{username[-2:] if len(username) > 5 else '***'}")
+    
     try:
         login_page = session.get(url)
+        print(f"[DEBUG] GET request successful. Status: {login_page.status_code}")
+        print(f"[DEBUG] Response headers: {dict(login_page.headers)}")
+        print(f"[DEBUG] Cookies received: {dict(session.cookies)}")
         login_page.raise_for_status()
     except requests.HTTPError as e:
-        print(f"Error: Failed to access login page. HTTP Status: {e.response.status_code}")
+        print(f"\n[ERROR] Failed to access login page. HTTP Status: {e.response.status_code}")
+        print(f"[DEBUG] Response headers: {dict(e.response.headers)}")
+        print(f"[DEBUG] Response body (first 500 chars):")
+        print(e.response.text[:500])
         sys.exit(1)
     except requests.RequestException as e:
-        print(f"Error: Network error while accessing login page: {e}")
+        print(f"\n[ERROR] Network error while accessing login page: {e}")
         sys.exit(1)
 
     soup = BeautifulSoup(login_page.text, "html.parser")
@@ -29,15 +38,23 @@ def login(session, url, username, password):
     # Extract hidden form fields (e.g. CSRF tokens)
     form = soup.find("form")
     if form is None:
-        print(f"Error: No login form found on the page at {url}.")
+        print(f"\n[ERROR] No login form found on the page at {url}.")
+        print(f"[DEBUG] Page title: {soup.title.string if soup.title else 'N/A'}")
+        print(f"[DEBUG] Page content (first 500 chars):")
+        print(login_page.text[:500])
         sys.exit(1)
 
+    print(f"[DEBUG] Login form found. Action: {form.get('action', 'N/A')}")
+    
     payload = {}
     for hidden_input in form.find_all("input", type="hidden"):
         name = hidden_input.get("name")
         value = hidden_input.get("value", "")
         if name:
             payload[name] = value
+    
+    if payload:
+        print(f"[DEBUG] Hidden form fields found: {list(payload.keys())}")
 
     # Detect username and password field names from the form
     username_field = form.find("input", attrs={"type": "text"}) or form.find(
@@ -47,6 +64,9 @@ def login(session, url, username, password):
 
     username_name = username_field.get("name", "username") if username_field else "username"
     password_name = password_field.get("name", "password") if password_field else "password"
+    
+    print(f"[DEBUG] Username field name: '{username_name}'")
+    print(f"[DEBUG] Password field name: '{password_name}'")
 
     payload[username_name] = username
     payload[password_name] = password
@@ -58,7 +78,10 @@ def login(session, url, username, password):
     if captcha_field:
         # Simple math captcha: 3 + 7 = 10
         payload["capt"] = "10"
-        print("CAPTCHA detected and answered (3 + 7 = 10)")
+        print("[DEBUG] CAPTCHA field detected: name='capt'")
+        print("[DEBUG] CAPTCHA answer set to: '10' (for question: 3 + 7 = ?)")
+    else:
+        print("[DEBUG] No CAPTCHA field found in form")
 
     # Determine form action URL
     action = form.get("action")
@@ -67,29 +90,53 @@ def login(session, url, username, password):
             action = requests.compat.urljoin(url, action)
     else:
         action = url
+    
+    print(f"[DEBUG] Form action URL: {action}")
+    
+    # Create a safe version of payload for logging (mask password)
+    safe_payload = payload.copy()
+    if password_name in safe_payload:
+        safe_payload[password_name] = "***MASKED***"
+    print(f"[DEBUG] Payload to be submitted: {safe_payload}")
+    print(f"[DEBUG] Total fields in payload: {len(payload)}")
 
+    print(f"\n[DEBUG] Submitting login form to: {action}")
     try:
         response = session.post(action, data=payload)
+        print(f"[DEBUG] POST request successful. Status: {response.status_code}")
+        print(f"[DEBUG] Response headers: {dict(response.headers)}")
+        print(f"[DEBUG] Cookies after login: {dict(session.cookies)}")
+        print(f"[DEBUG] Response URL (after redirects): {response.url}")
         response.raise_for_status()
     except requests.HTTPError as e:
-        print(f"Error: Login failed. HTTP Status: {e.response.status_code}")
+        print(f"\n[ERROR] Login failed. HTTP Status: {e.response.status_code}")
+        print(f"[DEBUG] Response headers: {dict(e.response.headers)}")
+        print(f"[DEBUG] Response URL: {e.response.url}")
+        print(f"[DEBUG] Response body (first 1000 chars):")
+        print(e.response.text[:1000])
         sys.exit(1)
     except requests.RequestException as e:
-        print(f"Error: Network error during login: {e}")
+        print(f"\n[ERROR] Network error during login: {e}")
         sys.exit(1)
 
     # Check for common signs of failed authentication
     result_soup = BeautifulSoup(response.text, "html.parser")
+    page_title = result_soup.title.string if result_soup.title else "N/A"
+    print(f"[DEBUG] Response page title: {page_title}")
+    
     error_indicators = result_soup.find_all(
         string=lambda t: t and any(
             kw in t.lower() for kw in ["invalid", "incorrect", "failed", "error"]
         )
     )
     if error_indicators:
-        print("Warning: Login may have failed. Page contains error messages:")
+        print("[WARNING] Login may have failed. Page contains error messages:")
         for msg in error_indicators:
             print(f"  - {msg.strip()}")
+    else:
+        print("[DEBUG] No obvious error messages found in response")
 
+    print("[DEBUG] Login attempt completed\n")
     return response
 
 
