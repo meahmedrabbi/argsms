@@ -154,6 +154,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             range_id = callback_data.replace("sms_range_", "")
             await view_sms_range_detail_callback(query, context, db, db_user, range_id)
         
+        # View SMS numbers for a range
+        elif callback_data.startswith("view_numbers_"):
+            parts = callback_data.split("_")
+            range_id = parts[2]
+            start = int(parts[3]) if len(parts) > 3 else 0
+            await view_sms_numbers_callback(query, context, db, db_user, range_id, start)
+        
         # Pagination callbacks
         elif callback_data.startswith("sms_page_"):
             page = int(callback_data.split("_")[2])
@@ -302,8 +309,93 @@ async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
     else:
         message += str(range_data)
     
-    # Add back button
-    keyboard = [[InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")]]
+    # Add buttons for actions and navigation
+    keyboard = [
+        [InlineKeyboardButton("📞 View Numbers", callback_data=f"view_numbers_{range_id}_0")],
+        [InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def view_sms_numbers_callback(query, context, db, db_user, range_id, start=0):
+    """Show SMS numbers for a specific range."""
+    log_access(db, db_user, f"view_sms_numbers_{range_id}_start_{start}")
+    
+    # Get scrapper session and fetch numbers
+    scrapper = get_scrapper_session()
+    length = 10  # Numbers per page
+    data = scrapper.get_sms_numbers(range_id, start=start, length=length)
+    
+    if not data:
+        await query.edit_message_text(
+            "❌ Failed to retrieve SMS numbers. Please try again later.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+            ]])
+        )
+        return
+    
+    # Parse DataTables response
+    numbers = []
+    total_records = 0
+    
+    if isinstance(data, dict):
+        numbers = data.get('aaData', [])
+        total_records = data.get('iTotalRecords', 0)
+    
+    # Calculate page info
+    current_page = (start // length) + 1
+    total_pages = (total_records + length - 1) // length if total_records > 0 else 1
+    
+    # Format message
+    message = f"📞 <b>SMS Numbers - Range {range_id}</b>\n"
+    message += f"<i>Page {current_page}/{total_pages} ({len(numbers)} numbers)</i>\n\n"
+    
+    if not numbers:
+        message += "No SMS numbers found in this range."
+    else:
+        for i, number in enumerate(numbers, 1):
+            if isinstance(number, list) and len(number) > 0:
+                # Format list data - typically: [number, status, date, etc.]
+                number_str = number[0] if len(number) > 0 else "N/A"
+                status = number[1] if len(number) > 1 else "N/A"
+                message += f"{start + i}. <code>{number_str}</code>"
+                if status:
+                    message += f" - {status}"
+                message += "\n"
+            elif isinstance(number, dict):
+                # Format dict data
+                number_str = number.get('number', number.get('phone', 'N/A'))
+                status = number.get('status', '')
+                message += f"{start + i}. <code>{number_str}</code>"
+                if status:
+                    message += f" - {status}"
+                message += "\n"
+            else:
+                message += f"{start + i}. {number}\n"
+    
+    # Create navigation keyboard
+    keyboard = []
+    
+    # Pagination buttons
+    nav_buttons = []
+    if start > 0:
+        prev_start = max(0, start - length)
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"view_numbers_{range_id}_{prev_start}"))
+    
+    if start + length < total_records:
+        next_start = start + length
+        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"view_numbers_{range_id}_{next_start}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    # Back buttons
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Range Details", callback_data=f"sms_range_{range_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')

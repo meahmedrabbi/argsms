@@ -335,6 +335,85 @@ def get_sms_ranges(session, base_url, max_results=25, page=1):
         return None
 
 
+def get_sms_numbers(session, base_url, range_id, start=0, length=25):
+    """
+    Retrieve SMS numbers for a specific range from the API endpoint.
+    
+    Args:
+        session: Authenticated requests session
+        base_url: Base URL of the application (e.g., http://217.182.195.194/ints)
+        range_id: The range ID to fetch numbers for (e.g., 643)
+        start: Starting index for pagination (default: 0)
+        length: Number of results per page (default: 25)
+    
+    Returns:
+        JSON response data or None if request fails
+    """
+    # Construct the SMS numbers API endpoint
+    api_endpoint = f"{base_url}/agent/res/data_smsnumbers.php"
+    
+    # Build DataTables parameters based on the provided URL structure
+    params = {
+        'frange': range_id,
+        'fclient': '',
+        'sEcho': '1',
+        'iColumns': '8',
+        'sColumns': ',,,,,,,',
+        'iDisplayStart': start,
+        'iDisplayLength': length,
+        'sSearch': '',
+        'bRegex': 'false',
+        'iSortCol_0': '0',
+        'sSortDir_0': 'asc',
+        'iSortingCols': '1',
+    }
+    
+    # Add column-specific parameters
+    for i in range(8):
+        params[f'mDataProp_{i}'] = str(i)
+        params[f'sSearch_{i}'] = ''
+        params[f'bRegex_{i}'] = 'false'
+        params[f'bSearchable_{i}'] = 'true'
+        params[f'bSortable_{i}'] = 'true' if i > 0 else 'false'
+    
+    # Set headers for AJAX request
+    headers = {
+        'Accept': 'application/json, text/javascript, */*;q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': f"{base_url}/agent/MySMSNumbers"
+    }
+    
+    print(f"→ Fetching SMS numbers for range {range_id} (start {start}, length {length})...")
+    debug_print(f"[DEBUG] API endpoint: {api_endpoint}")
+    debug_print(f"[DEBUG] Parameters: {params}")
+    
+    try:
+        response = session.get(api_endpoint, params=params, headers=headers)
+        response.raise_for_status()
+        
+        # Store response text before parsing (for error handling)
+        response_text = response.text
+        
+        # Parse JSON response
+        data = response.json()
+        debug_print(f"[DEBUG] Response status: {response.status_code}")
+        debug_print(f"[DEBUG] Response data type: {type(data)}")
+        
+        return data
+        
+    except requests.HTTPError as e:
+        print(f"[ERROR] Failed to fetch SMS numbers. HTTP Status: {e.response.status_code}")
+        debug_print(f"[DEBUG] Response text: {e.response.text[:500]}")
+        return None
+    except requests.RequestException as e:
+        print(f"[ERROR] Network error while fetching SMS numbers: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Failed to parse JSON response: {e}")
+        debug_print(f"[DEBUG] Response text: {response_text[:500]}")
+        return None
+
+
 def display_sms_ranges(data):
     """
     Display SMS ranges data in a formatted way.
