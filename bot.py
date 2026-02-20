@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+import traceback
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -798,8 +799,38 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle errors."""
-    logger.error(f"Update {update} caused error {context.error}")
+    """Handle errors in a clean and informative way."""
+    # Extract useful information from update
+    update_info = "No update information"
+    if update:
+        try:
+            if update.effective_user:
+                user_id = update.effective_user.id
+                username = update.effective_user.username or "N/A"
+                update_info = f"User {user_id} (@{username})"
+            
+            if update.effective_chat:
+                chat_id = update.effective_chat.id
+                update_info += f", Chat {chat_id}"
+            
+            if update.message and update.message.text:
+                text = update.message.text[:100]  # Truncate long messages
+                update_info += f", Text: '{text}'"
+            elif update.callback_query:
+                data = update.callback_query.data
+                update_info += f", Callback: '{data}'"
+        except Exception as e:
+            update_info += f" (Error extracting info: {e})"
+    
+    # Log the error with clean information
+    error_msg = f"Error occurred: {context.error.__class__.__name__}: {str(context.error)}"
+    logger.error(f"{update_info} - {error_msg}")
+    
+    # Log full traceback at debug level
+    if context.error:
+        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+        tb_string = ''.join(tb_list)
+        logger.debug(f"Full traceback:\n{tb_string}")
 
 
 def main():
