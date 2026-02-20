@@ -45,6 +45,10 @@ if not BOT_TOKEN:
 MAX_BUTTON_TEXT_LENGTH = 60
 MAX_TITLE_LENGTH = 50
 
+# Constants for SMS number fetching
+SMS_FETCH_COUNT = 100  # How many numbers to fetch from API
+SMS_DISPLAY_COUNT = 20  # How many random numbers to display
+
 # Initialize database session factory
 SessionFactory = init_db()
 
@@ -189,7 +193,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # View SMS numbers for a range
         elif callback_data.startswith("view_numbers_"):
-            range_id = callback_data.replace("view_numbers_", "")
+            range_id = callback_data[len("view_numbers_"):]
             await view_sms_numbers_callback(query, context, db, db_user, range_id)
         
         # Pagination callbacks
@@ -358,10 +362,7 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
     scrapper = get_scrapper_session()
     
     # Fetch a larger batch to randomly select from
-    fetch_length = 100  # Fetch 100 numbers
-    display_count = 20  # Display 20 random numbers
-    
-    data = scrapper.get_sms_numbers(range_id, start=0, length=fetch_length)
+    data = scrapper.get_sms_numbers(range_id, start=0, length=SMS_FETCH_COUNT)
     
     if not data:
         await query.edit_message_text(
@@ -385,9 +386,9 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
         except (ValueError, TypeError):
             total_records = 0
     
-    # Randomly select display_count numbers from the fetched batch
-    if len(numbers) > display_count:
-        numbers = random.sample(numbers, display_count)
+    # Randomly select SMS_DISPLAY_COUNT numbers from the fetched batch
+    if len(numbers) >= SMS_DISPLAY_COUNT:
+        numbers = random.sample(numbers, SMS_DISPLAY_COUNT)
     
     # Format message (escape range_id for HTML)
     range_id_escaped = escape_html(range_id)
