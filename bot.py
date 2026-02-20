@@ -398,7 +398,9 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
     if not numbers:
         message += "No SMS numbers found in this range."
     else:
-        for i, number in enumerate(numbers, 1):
+        # Collect all phone numbers in a list
+        phone_numbers = []
+        for number in numbers:
             if isinstance(number, list) and len(number) >= 4:
                 # DataTables response structure (8 columns):
                 # [0]: Checkbox HTML
@@ -411,16 +413,15 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
                 # [7]: Stats (HTML)
                 
                 phone_number = number[3] if len(number) > 3 else "N/A"
-                
-                # Escape for HTML display
-                phone_number = escape_html(phone_number)
-                
-                # Format: Only phone number in code block for click-to-copy
-                message += f"{i}. <code>{phone_number}</code>\n"
+                phone_numbers.append(phone_number)
             else:
                 # Fallback for any other structure
-                number_str = escape_html(str(number))
-                message += f"{i}. <code>{number_str}</code>\n"
+                phone_numbers.append(str(number))
+        
+        # Format all numbers in a single code block with quotes
+        # This allows copying all numbers at once
+        numbers_text = '\n'.join([f'"{phone}"' for phone in phone_numbers])
+        message += f"<pre>{numbers_text}</pre>"
     
     # Create navigation keyboard (no pagination, only back buttons)
     keyboard = []
