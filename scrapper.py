@@ -455,9 +455,6 @@ def get_sms_messages(session, base_url, phone_number, date_from=None, date_to=No
         'fgnumber': '',
         'fgcli': '',
         'fg': '0',
-        'csstr': '9228651df441c24ac61000d59ad3ae3b',  # CSRF-like token from sample request
-                                                       # Note: This token appears to be static in the API,
-                                                       # but may need to be extracted dynamically if it changes
         'sEcho': '1',
         'iColumns': '9',
         'sColumns': ',,,,,,,,',
@@ -482,7 +479,7 @@ def get_sms_messages(session, base_url, phone_number, date_from=None, date_to=No
     headers = {
         'Accept': 'application/json, text/javascript, */*;q=0.01',
         'X-Requested-With': 'XMLHttpRequest',
-        'Referer': f"{base_url}/agent/MySMSNumbers"
+        'Referer': f"{base_url}/agent/SMSCDR"
     }
     
     print(f"→ Searching SMS messages for number {phone_number}...")
