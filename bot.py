@@ -60,6 +60,31 @@ def escape_html(text):
     return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+def strip_html_tags(html_str):
+    """
+    Strip HTML tags from string and decode HTML entities.
+    
+    Args:
+        html_str: String potentially containing HTML tags
+    
+    Returns:
+        Clean text without HTML tags
+    """
+    if not html_str or not isinstance(html_str, str):
+        return str(html_str) if html_str else ""
+    
+    # Use a simple regex to remove HTML tags
+    import re
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', html_str)
+    # Decode common HTML entities
+    text = text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+    text = text.replace('&quot;', '"').replace('&#039;', "'").replace('&nbsp;', ' ')
+    # Clean up whitespace
+    text = ' '.join(text.split())
+    return text.strip()
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command."""
     user = update.effective_user
@@ -355,7 +380,12 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
     
     if isinstance(data, dict):
         numbers = data.get('aaData', [])
-        total_records = data.get('iTotalRecords', 0)
+        # iTotalRecords might be a string, convert to int
+        total_records_raw = data.get('iTotalRecords', 0)
+        try:
+            total_records = int(total_records_raw) if total_records_raw else 0
+        except (ValueError, TypeError):
+            total_records = 0
     
     # Calculate page info
     current_page = (start // length) + 1
@@ -370,36 +400,44 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
         message += "No SMS numbers found in this range."
     else:
         for i, number in enumerate(numbers, 1):
-            if isinstance(number, list) and len(number) > 0:
-                # Format list data - typically: [number, status, date, etc.]
-                number_str = number[0] if len(number) > 0 else "N/A"
-                status = number[1] if len(number) > 1 else "N/A"
+            if isinstance(number, list) and len(number) >= 4:
+                # DataTables response structure (8 columns):
+                # [0]: Checkbox HTML
+                # [1]: Title/Description
+                # [2]: Empty
+                # [3]: Phone Number ← This is what we need!
+                # [4]: Price/Rate (HTML)
+                # [5]: Action buttons (HTML)
+                # [6]: Empty
+                # [7]: Stats (HTML)
                 
-                # Escape HTML special characters
-                number_str = escape_html(number_str)
-                status = escape_html(status)
+                phone_number = number[3] if len(number) > 3 else "N/A"
+                title = strip_html_tags(number[1]) if len(number) > 1 else ""
+                price = strip_html_tags(number[4]) if len(number) > 4 else ""
+                stats = strip_html_tags(number[7]) if len(number) > 7 else ""
                 
-                message += f"{start + i}. <code>{number_str}</code>"
-                if status and status != "N/A":
-                    message += f" - {status}"
-                message += "\n"
-            elif isinstance(number, dict):
-                # Format dict data
-                number_str = number.get('number', number.get('phone', 'N/A'))
-                status = number.get('status', '')
+                # Escape for HTML display
+                phone_number = escape_html(phone_number)
+                title = escape_html(title)
+                price = escape_html(price)
+                stats = escape_html(stats)
                 
-                # Escape HTML special characters
-                number_str = escape_html(number_str)
-                status = escape_html(status)
+                # Format: Phone number (main display)
+                message += f"{start + i}. <code>{phone_number}</code>"
                 
-                message += f"{start + i}. <code>{number_str}</code>"
-                if status:
-                    message += f" - {status}"
+                # Add price if available
+                if price:
+                    message += f" • {price}"
+                
+                # Add stats if available
+                if stats:
+                    message += f" • {stats}"
+                
                 message += "\n"
             else:
-                # Escape HTML in plain text as well
-                number_escaped = escape_html(number)
-                message += f"{start + i}. {number_escaped}\n"
+                # Fallback for any other structure
+                number_str = escape_html(str(number))
+                message += f"{start + i}. {number_str}\n"
     
     # Create navigation keyboard
     keyboard = []
