@@ -392,8 +392,7 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
     
     # Format message (escape range_id for HTML)
     range_id_escaped = escape_html(range_id)
-    message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n"
-    message += f"<i>Showing {len(numbers)} random numbers from {total_records} total</i>\n\n"
+    message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n\n"
     
     if not numbers:
         message += "No SMS numbers found in this range."
@@ -418,9 +417,9 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
                 # Fallback for any other structure
                 phone_numbers.append(str(number))
         
-        # Format all numbers in a single code block with quotes
+        # Format all numbers in a single code block
         # This allows copying all numbers at once
-        numbers_text = '\n'.join([f'"{phone}"' for phone in phone_numbers])
+        numbers_text = '\n'.join([f'{phone}' for phone in phone_numbers])
         message += f"<pre>{numbers_text}</pre>"
     
     # Create navigation keyboard (no pagination, only back buttons)
