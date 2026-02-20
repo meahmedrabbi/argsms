@@ -74,18 +74,32 @@ INFO - Starting ARGSMS Telegram Bot...
 
 **As an admin:**
 - Use `/admin` to access the admin panel
-- Manage users (ban/unban)
-- Manage balance with `/addbalance` and `/deductbalance` commands
-- Set price ranges with `/setprice` command
+- All management tasks done through inline buttons:
+  - Select users from lists to ban/unban
+  - Select users to add/deduct balance
+  - Enter amounts through chat messages
+  - Set price ranges interactively
 - View comprehensive statistics
 
 ## Initial Setup for Admins
 
 After starting the bot for the first time:
 
-1. **Set Default Prices**: Use `/setprice default 1.0` to set a default price
-2. **Add Specific Prices**: Use `/setprice russia 2.5` for country-specific pricing
-3. **Add Initial Balance**: Give yourself some test balance with `/addbalance <your_id> 100`
+1. **Add Initial Balance**: 
+   - Go to `/admin` → "💰 Manage Balance"
+   - Select yourself from the list
+   - Click ➕ button
+   - Send the amount (e.g., "100")
+
+2. **Set Default Price**: 
+   - Go to `/admin` → "💵 Set Price Ranges"
+   - Click "➕ Add Price Range"
+   - Send "default"
+   - Send "1.0"
+
+3. **Add Specific Prices**: 
+   - Repeat above steps with patterns like "russia", "usa"
+   - Send prices like "2.5", "3.0"
 
 ## Troubleshooting
 

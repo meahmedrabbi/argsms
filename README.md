@@ -139,11 +139,7 @@ The bot will:
 - `/start` - Show the main menu with available options
 - `/admin` - Access admin panel (admin users only)
 
-### Admin Commands
-
-- `/addbalance <user_id> <amount>` - Add balance to a user account
-- `/deductbalance <user_id> <amount>` - Deduct balance from a user account
-- `/setprice <pattern> <price>` - Set SMS price for a range pattern
+All other features are accessed through the inline menu interface - no additional commands needed!
 
 ### Bot Features
 
@@ -168,16 +164,24 @@ The bot will:
 
 #### For Administrators:
 - **List Users**: View all registered bot users with balance info
-- **Manage Admins**: Grant or revoke admin privileges
-- **Ban/Unban Users**: Control user access to the bot
-- **Manage Balance**: Add or deduct balance from user accounts
+- **Manage Admins**: Grant or revoke admin privileges through interactive menu
+- **Ban/Unban Users**: Control user access through interactive menu
+- **Manage Balance**: Add or deduct balance from user accounts through interactive menu
+  - Select user from list
+  - Choose add or deduct
+  - Enter amount via message
 - **Recharge Requests**: View pending recharge requests
-- **Set Price Ranges**: Configure SMS prices based on range patterns
+- **Set Price Ranges**: Configure SMS prices based on range patterns through interactive menu
+  - Click "Add Price Range"
+  - Enter pattern (e.g., "russia")
+  - Enter price (e.g., "2.5")
 - **View Stats**: See comprehensive bot statistics
   - User counts (total, admins, banned)
   - Financial stats (total balance, total spent)
   - SMS statistics (total received)
   - Number holds (active, permanent)
+
+**All admin operations are done through the inline menu interface!**
 
 ### Setting Up Admins
 

@@ -16,7 +16,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
-    filters
+    filters,
+    ConversationHandler
 )
 
 from database import (
@@ -72,6 +73,12 @@ SMS_DISPLAY_COUNT = 20  # How many random numbers to display
 
 # Constants for SMS message display
 MAX_TELEGRAM_MESSAGE_LENGTH = 3500  # Leave room for additional text
+
+# Conversation states for admin operations
+WAITING_FOR_ADD_BALANCE_AMOUNT = 1
+WAITING_FOR_DEDUCT_BALANCE_AMOUNT = 2
+WAITING_FOR_PRICE_PATTERN = 3
+WAITING_FOR_PRICE_AMOUNT = 4
 
 # Initialize database session factory
 SessionFactory = init_db()
@@ -340,14 +347,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await unban_user_callback(query, context, db, db_user, user_id)
         
         # Add balance callback
-        elif callback_data.startswith("add_balance_"):
-            user_id = int(callback_data.split("_")[2])
+        elif callback_data.startswith("select_add_balance_"):
+            user_id = int(callback_data.split("_")[3])
             await add_balance_prompt_callback(query, context, db, db_user, user_id)
         
         # Deduct balance callback
-        elif callback_data.startswith("deduct_balance_"):
-            user_id = int(callback_data.split("_")[2])
+        elif callback_data.startswith("select_deduct_balance_"):
+            user_id = int(callback_data.split("_")[3])
             await deduct_balance_prompt_callback(query, context, db, db_user, user_id)
+        
+        # Set price callback - ask for pattern
+        elif callback_data == "add_price_range":
+            await add_price_range_prompt_callback(query, context, db, db_user)
         
         # Approve recharge callback
         elif callback_data.startswith("approve_recharge_"):
@@ -977,13 +988,16 @@ async def admin_manage_balance_callback(query, context, db, db_user):
     message = "💰 Manage User Balance\n\n"
     message += "Select a user to manage their balance:\n\n"
     
+    keyboard = []
     for user in users:
         username_str = f"@{user.username}" if user.username else f"ID:{user.telegram_id}"
-        message += f"👤 {username_str} - Balance: ${user.balance:.2f}\n"
+        button_text = f"{username_str} - ${user.balance:.2f}"
+        keyboard.append([
+            InlineKeyboardButton(f"➕ {button_text}", callback_data=f"select_add_balance_{user.id}"),
+            InlineKeyboardButton(f"➖", callback_data=f"select_deduct_balance_{user.id}")
+        ])
     
-    message += "\n💡 Tip: Use /addbalance <user_id> <amount> or /deductbalance <user_id> <amount> commands"
-    
-    keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup)
@@ -995,8 +1009,26 @@ async def add_balance_prompt_callback(query, context, db, db_user, target_user_i
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    # This is a placeholder - actual implementation requires message handler
-    await query.answer("💡 Use /addbalance <user_id> <amount> command", show_alert=True)
+    target_user = db.query(User).filter_by(id=target_user_id).first()
+    if not target_user:
+        await query.answer("❌ User not found", show_alert=True)
+        return
+    
+    # Store target user ID in user_data for next message
+    context.user_data['admin_action'] = 'add_balance'
+    context.user_data['target_user_id'] = target_user_id
+    
+    username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+    message = (
+        f"💰 <b>Add Balance to {username_str}</b>\n\n"
+        f"Current balance: ${target_user.balance:.2f}\n\n"
+        "Please send the amount to add (e.g., 100 or 50.5):"
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
 async def deduct_balance_prompt_callback(query, context, db, db_user, target_user_id):
@@ -1005,8 +1037,26 @@ async def deduct_balance_prompt_callback(query, context, db, db_user, target_use
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    # This is a placeholder - actual implementation requires message handler
-    await query.answer("💡 Use /deductbalance <user_id> <amount> command", show_alert=True)
+    target_user = db.query(User).filter_by(id=target_user_id).first()
+    if not target_user:
+        await query.answer("❌ User not found", show_alert=True)
+        return
+    
+    # Store target user ID in user_data for next message
+    context.user_data['admin_action'] = 'deduct_balance'
+    context.user_data['target_user_id'] = target_user_id
+    
+    username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+    message = (
+        f"💰 <b>Deduct Balance from {username_str}</b>\n\n"
+        f"Current balance: ${target_user.balance:.2f}\n\n"
+        "Please send the amount to deduct (e.g., 10 or 5.5):"
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
 async def admin_recharge_requests_callback(query, context, db, db_user):
@@ -1023,20 +1073,24 @@ async def admin_recharge_requests_callback(query, context, db, db_user):
     message = "💳 <b>Recharge Requests</b>\n\n"
     
     if not pending_requests:
-        message += "No pending recharge requests.\n"
+        message += "No pending recharge requests.\n\n"
+        message += "Users can request recharges from the main menu.\n"
+        message += "Contact information will be shown to them."
         keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
     else:
         message += f"Pending requests: {len(pending_requests)}\n\n"
         
-        keyboard = []
         for req in pending_requests:
             req_user = db.query(User).filter_by(id=req.user_id).first()
             username_str = f"@{req_user.username}" if req_user.username else f"ID:{req_user.telegram_id}"
-            button_text = f"{username_str} - ${req.amount:.2f}"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_recharge_{req.id}")])
+            message += f"📝 {username_str} - ${req.amount:.2f}\n"
+            message += f"   Requested: {req.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
         
-        message += "💡 Tip: Use /approverecharge <request_id> or /rejectrecharge <request_id> commands"
-        keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
+        message += "\n💡 Process recharges manually by using 'Manage Balance' option."
+        keyboard = [
+            [InlineKeyboardButton("💰 Manage Balance", callback_data="admin_manage_balance")],
+            [InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]
+        ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
@@ -1082,10 +1136,33 @@ async def admin_price_ranges_callback(query, context, db, db_user):
             message += f"📍 Pattern: <code>{pr.range_pattern}</code>\n"
             message += f"   Price: ${pr.price:.2f}\n\n"
     
-    message += "💡 Use /setprice <pattern> <price> to set a price range\n"
-    message += "Example: /setprice russia 2.5"
+    message += "Click below to add a new price range:"
     
-    keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Price Range", callback_data="add_price_range")],
+        [InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def add_price_range_prompt_callback(query, context, db, db_user):
+    """Prompt admin to add a price range."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # Set state for pattern input
+    context.user_data['admin_action'] = 'set_price_pattern'
+    
+    message = (
+        "💵 <b>Add Price Range</b>\n\n"
+        "Please send the range pattern (e.g., russia, usa, megafon).\n"
+        "This pattern will match range names (case-insensitive)."
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_price_ranges")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
@@ -1126,6 +1203,39 @@ def is_stats_row(row):
     return ',' in first_field and '%' in first_field
 
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all text messages - check for admin actions first, then phone search."""
+    message = update.message
+    if not message or not message.text:
+        return
+    
+    text = message.text.strip()
+    db = get_db_session()
+    
+    try:
+        user = get_or_create_user(
+            db,
+            telegram_id=message.from_user.id,
+            username=message.from_user.username or message.from_user.first_name
+        )
+        
+        # Check for admin actions first
+        admin_action = context.user_data.get('admin_action')
+        if admin_action and is_user_admin(db, user.telegram_id):
+            # Handle admin input
+            await handle_admin_input(update, context)
+            return
+        
+        # Check if the message is a phone number
+        if not is_phone_number(text):
+            return
+        
+        # Handle phone search
+        await handle_phone_search(update, context)
+    finally:
+        db.close()
+
+
 async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle phone number search when user sends a phone number."""
     message = update.message
@@ -1133,10 +1243,6 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     
     text = message.text.strip()
-    
-    # Check if the message is a phone number
-    if not is_phone_number(text):
-        return
     
     # Extract clean phone number
     phone_number = re.sub(r'[^\d+]', '', text)
@@ -1484,181 +1590,173 @@ async def retry_sms_callback(query, context, db, db_user):
         )
 
 
-async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /addbalance command (admin only)."""
-    user = update.effective_user
+async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin text inputs for balance and price operations."""
+    message = update.message
+    if not message or not message.text:
+        return
+    
+    text = message.text.strip()
     db = get_db_session()
     
     try:
+        # Get user
+        user = get_or_create_user(
+            db,
+            telegram_id=message.from_user.id,
+            username=message.from_user.username
+        )
+        
         # Check if user is admin
-        if not is_user_admin(db, user.id):
-            await update.message.reply_text("❌ You don't have admin privileges.")
+        if not is_user_admin(db, user.telegram_id):
             return
         
-        # Parse command arguments
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "❌ Usage: /addbalance <user_id> <amount>\n"
-                "Example: /addbalance 123456789 10.50"
+        # Check if there's a pending admin action
+        admin_action = context.user_data.get('admin_action')
+        
+        if admin_action == 'add_balance':
+            # Parse amount
+            try:
+                amount = float(text)
+                if amount <= 0:
+                    await message.reply_text("❌ Amount must be positive. Please try again:")
+                    return
+                
+                target_user_id = context.user_data.get('target_user_id')
+                target_user = db.query(User).filter_by(id=target_user_id).first()
+                
+                if not target_user:
+                    await message.reply_text("❌ User not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Add balance
+                new_balance = add_user_balance(
+                    db, target_user, amount,
+                    transaction_type='admin_add',
+                    description=f"Admin added by {user.telegram_id}"
+                )
+                
+                log_access(db, user, f"add_balance_{target_user.telegram_id}_{amount}")
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"✅ Successfully added ${amount:.2f} to {username_str}\n"
+                    f"New balance: ${new_balance:.2f}"
+                )
+                
+                # Clear state
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid amount. Please send a valid number (e.g., 100 or 50.5):")
+                return
+        
+        elif admin_action == 'deduct_balance':
+            # Parse amount
+            try:
+                amount = float(text)
+                if amount <= 0:
+                    await message.reply_text("❌ Amount must be positive. Please try again:")
+                    return
+                
+                target_user_id = context.user_data.get('target_user_id')
+                target_user = db.query(User).filter_by(id=target_user_id).first()
+                
+                if not target_user:
+                    await message.reply_text("❌ User not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Check sufficient balance
+                if target_user.balance < amount:
+                    await message.reply_text(
+                        f"❌ User has insufficient balance.\n"
+                        f"Current balance: ${target_user.balance:.2f}\n"
+                        f"Requested deduction: ${amount:.2f}"
+                    )
+                    context.user_data.clear()
+                    return
+                
+                # Deduct balance
+                new_balance = deduct_user_balance(
+                    db, target_user, amount,
+                    transaction_type='admin_deduct',
+                    description=f"Admin deducted by {user.telegram_id}"
+                )
+                
+                log_access(db, user, f"deduct_balance_{target_user.telegram_id}_{amount}")
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"✅ Successfully deducted ${amount:.2f} from {username_str}\n"
+                    f"New balance: ${new_balance:.2f}"
+                )
+                
+                # Clear state
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid amount. Please send a valid number (e.g., 10 or 5.5):")
+                return
+        
+        elif admin_action == 'set_price_pattern':
+            # Store pattern and ask for price
+            context.user_data['price_pattern'] = text.lower()
+            context.user_data['admin_action'] = 'set_price_amount'
+            
+            await message.reply_text(
+                f"💵 Pattern set: <code>{text.lower()}</code>\n\n"
+                "Now send the price (e.g., 2.5 or 10):",
+                parse_mode='HTML'
             )
             return
         
-        try:
-            target_telegram_id = int(context.args[0])
-            amount = float(context.args[1])
-        except ValueError:
-            await update.message.reply_text("❌ Invalid user ID or amount.")
-            return
-        
-        if amount <= 0:
-            await update.message.reply_text("❌ Amount must be positive.")
-            return
-        
-        # Find target user
-        target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
-        if not target_user:
-            await update.message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
-            return
-        
-        # Add balance
-        admin_user = get_or_create_user(db, user.id, user.username)
-        new_balance = add_user_balance(
-            db, target_user, amount, 
-            transaction_type='admin_add',
-            description=f"Admin added by {user.id}"
-        )
-        
-        log_access(db, admin_user, f"add_balance_{target_telegram_id}_{amount}")
-        
-        await update.message.reply_text(
-            f"✅ Successfully added ${amount:.2f} to user {target_telegram_id}\n"
-            f"New balance: ${new_balance:.2f}"
-        )
-    finally:
-        db.close()
-
-
-async def deductbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /deductbalance command (admin only)."""
-    user = update.effective_user
-    db = get_db_session()
+        elif admin_action == 'set_price_amount':
+            # Parse price
+            try:
+                price = float(text)
+                if price < 0:
+                    await message.reply_text("❌ Price must be non-negative. Please try again:")
+                    return
+                
+                pattern = context.user_data.get('price_pattern')
+                
+                # Check if pattern already exists
+                existing = db.query(PriceRange).filter_by(range_pattern=pattern).first()
+                
+                if existing:
+                    # Update existing
+                    existing.price = price
+                    db.commit()
+                    action = "updated"
+                else:
+                    # Create new
+                    price_range = PriceRange(
+                        range_pattern=pattern,
+                        price=price,
+                        created_by=user.id
+                    )
+                    db.add(price_range)
+                    db.commit()
+                    action = "created"
+                
+                log_access(db, user, f"set_price_{pattern}_{price}")
+                
+                await message.reply_text(
+                    f"✅ Price range {action} successfully!\n"
+                    f"Pattern: <code>{pattern}</code>\n"
+                    f"Price: ${price:.2f}",
+                    parse_mode='HTML'
+                )
+                
+                # Clear state
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid price. Please send a valid number (e.g., 2.5 or 10):")
+                return
     
-    try:
-        # Check if user is admin
-        if not is_user_admin(db, user.id):
-            await update.message.reply_text("❌ You don't have admin privileges.")
-            return
-        
-        # Parse command arguments
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "❌ Usage: /deductbalance <user_id> <amount>\n"
-                "Example: /deductbalance 123456789 5.50"
-            )
-            return
-        
-        try:
-            target_telegram_id = int(context.args[0])
-            amount = float(context.args[1])
-        except ValueError:
-            await update.message.reply_text("❌ Invalid user ID or amount.")
-            return
-        
-        if amount <= 0:
-            await update.message.reply_text("❌ Amount must be positive.")
-            return
-        
-        # Find target user
-        target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
-        if not target_user:
-            await update.message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
-            return
-        
-        # Check if user has sufficient balance
-        if target_user.balance < amount:
-            await update.message.reply_text(
-                f"❌ User has insufficient balance.\n"
-                f"Current balance: ${target_user.balance:.2f}\n"
-                f"Requested deduction: ${amount:.2f}"
-            )
-            return
-        
-        # Deduct balance
-        admin_user = get_or_create_user(db, user.id, user.username)
-        new_balance = deduct_user_balance(
-            db, target_user, amount, 
-            transaction_type='admin_deduct',
-            description=f"Admin deducted by {user.id}"
-        )
-        
-        log_access(db, admin_user, f"deduct_balance_{target_telegram_id}_{amount}")
-        
-        await update.message.reply_text(
-            f"✅ Successfully deducted ${amount:.2f} from user {target_telegram_id}\n"
-            f"New balance: ${new_balance:.2f}"
-        )
-    finally:
-        db.close()
-
-
-async def setprice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /setprice command (admin only)."""
-    user = update.effective_user
-    db = get_db_session()
-    
-    try:
-        # Check if user is admin
-        if not is_user_admin(db, user.id):
-            await update.message.reply_text("❌ You don't have admin privileges.")
-            return
-        
-        # Parse command arguments
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "❌ Usage: /setprice <pattern> <price>\n"
-                "Example: /setprice russia 2.5"
-            )
-            return
-        
-        pattern = context.args[0].lower()
-        try:
-            price = float(context.args[1])
-        except ValueError:
-            await update.message.reply_text("❌ Invalid price.")
-            return
-        
-        if price < 0:
-            await update.message.reply_text("❌ Price must be non-negative.")
-            return
-        
-        # Check if pattern already exists
-        existing = db.query(PriceRange).filter_by(range_pattern=pattern).first()
-        
-        admin_user = get_or_create_user(db, user.id, user.username)
-        
-        if existing:
-            # Update existing price
-            existing.price = price
-            db.commit()
-            action = "updated"
-        else:
-            # Create new price range
-            price_range = PriceRange(
-                range_pattern=pattern,
-                price=price,
-                created_by=admin_user.id
-            )
-            db.add(price_range)
-            db.commit()
-            action = "created"
-        
-        log_access(db, admin_user, f"set_price_{pattern}_{price}")
-        
-        await update.message.reply_text(
-            f"✅ Price range {action} successfully!\n"
-            f"Pattern: {pattern}\n"
-            f"Price: ${price:.2f}"
-        )
     finally:
         db.close()
 
@@ -1706,15 +1804,12 @@ def main():
     # Register command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("admin", admin_command))
-    application.add_handler(CommandHandler("addbalance", addbalance_command))
-    application.add_handler(CommandHandler("deductbalance", deductbalance_command))
-    application.add_handler(CommandHandler("setprice", setprice_command))
-    
-    # Register message handler for phone number search
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_search))
     
     # Register callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Register message handler for text messages (admin actions and phone search)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Register error handler
     application.add_error_handler(error_handler)
