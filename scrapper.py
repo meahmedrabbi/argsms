@@ -4,6 +4,7 @@ import os
 import pickle
 import re
 import sys
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -311,6 +312,9 @@ def get_sms_ranges(session, base_url, max_results=25, page=1):
         response = session.get(api_endpoint, params=params, headers=headers)
         response.raise_for_status()
         
+        # Store response text before parsing (for error handling)
+        response_text = response.text
+        
         # Parse JSON response
         data = response.json()
         debug_print(f"[DEBUG] Response status: {response.status_code}")
@@ -327,7 +331,7 @@ def get_sms_ranges(session, base_url, max_results=25, page=1):
         return None
     except json.JSONDecodeError as e:
         print(f"[ERROR] Failed to parse JSON response: {e}")
-        debug_print(f"[DEBUG] Response text: {response.text[:500]}")
+        debug_print(f"[DEBUG] Response text: {response_text[:500]}")
         return None
 
 
@@ -398,8 +402,9 @@ def main():
 Examples:
   python scrapper.py                    # Show dashboard (default)
   python scrapper.py --action dashboard # Show dashboard
-  python scrapper.py --action sms-ranges # Get SMS ranges
-  python scrapper.py --action sms-ranges --max 50 --page 2 # Get page 2 with 50 results
+  python scrapper.py --action sms-ranges # Get SMS ranges (formatted)
+  python scrapper.py --action sms-ranges --json # Get SMS ranges (raw JSON)
+  python scrapper.py --action sms-ranges --max-results 50 --page 2 # Get page 2 with 50 results
         """
     )
     parser.add_argument(
@@ -409,7 +414,7 @@ Examples:
         help='Action to perform (default: dashboard)'
     )
     parser.add_argument(
-        '--max',
+        '--max-results',
         type=int,
         default=25,
         help='Maximum results per page for sms-ranges (default: 25)'
@@ -419,6 +424,11 @@ Examples:
         type=int,
         default=1,
         help='Page number for sms-ranges (default: 1)'
+    )
+    parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output raw JSON response (for sms-ranges action)'
     )
     
     args = parser.parse_args()
@@ -474,15 +484,21 @@ Examples:
         # Save cookies for next time
         save_cookies(session)
 
-    # Extract base URL from API_URL (remove /login part)
-    base_url = API_URL.rsplit('/', 1)[0] if '/login' in API_URL else API_URL.rsplit('/', 2)[0]
+    # Extract base URL from API_URL using urlparse for reliability
+    parsed_url = urlparse(API_URL)
+    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path.rsplit('/', 1)[0]}"
     
     # Perform the requested action
     if args.action == 'sms-ranges':
         # Get SMS ranges
-        data = get_sms_ranges(session, base_url, max_results=args.max, page=args.page)
+        data = get_sms_ranges(session, base_url, max_results=args.max_results, page=args.page)
         if data:
-            display_sms_ranges(data)
+            if args.json:
+                # Output raw JSON
+                print(json.dumps(data, indent=2))
+            else:
+                # Display formatted output
+                display_sms_ranges(data)
         else:
             print("[ERROR] Failed to retrieve SMS ranges")
             sys.exit(1)
