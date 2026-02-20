@@ -698,7 +698,7 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
         # Log the search
-        log_access(db, user.id, f"SMS search: {phone_number}")
+        log_access(db, user, f"SMS search: {phone_number}")
         
         # Send "searching" message
         searching_msg = await message.reply_text(
