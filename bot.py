@@ -215,6 +215,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif callback_data.startswith("remove_admin_"):
             user_id = int(callback_data.split("_")[2])
             await remove_admin_callback(query, context, db, db_user, user_id)
+        
+        # Retry SMS search callback
+        elif callback_data.startswith("retry_sms_"):
+            await retry_sms_callback(query, context, db, db_user)
     finally:
         db.close()
 
@@ -734,9 +738,19 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
                         actual_messages.append(msg)
             
             if not actual_messages:
+                # Create keyboard with retry button
+                keyboard = [
+                    [
+                        InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                        InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await searching_msg.edit_text(
                     f"📭 No SMS messages found for <code>{escape_html(phone_number)}</code>",
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
                 return
             
@@ -796,6 +810,132 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             await searching_msg.edit_text(
                 "❌ An error occurred while searching for SMS messages. Please try again later."
             )
+
+
+async def retry_sms_callback(query, context, db, db_user):
+    """Handle retry button for SMS search."""
+    # Extract phone number from callback data (format: retry_sms_PHONENUMBER)
+    phone_number = query.data.replace("retry_sms_", "")
+    
+    # Log the retry
+    log_access(db, db_user, f"SMS search retry: {phone_number}")
+    
+    # Show searching message
+    await query.edit_message_text(
+        f"🔍 Searching SMS messages for <code>{escape_html(phone_number)}</code>...",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Get scrapper session
+        scrapper = get_scrapper_session()
+        
+        # Search for SMS messages
+        data = scrapper.get_sms_messages(phone_number)
+        
+        if not data:
+            # Create keyboard with retry button
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                    InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                "❌ Failed to retrieve SMS messages. Please try again.",
+                reply_markup=reply_markup
+            )
+            return
+        
+        # Parse response
+        total_records = data.get('iTotalRecords', '0')
+        if isinstance(total_records, str):
+            total_records = int(total_records) if total_records.isdigit() else 0
+        
+        messages = data.get('aaData', [])
+        
+        # Filter out the stats row
+        actual_messages = []
+        for msg in messages:
+            if isinstance(msg, list) and len(msg) >= 6:
+                if not is_stats_row(msg):
+                    actual_messages.append(msg)
+        
+        if not actual_messages:
+            # Create keyboard with retry button
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                    InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"📭 No SMS messages found for <code>{escape_html(phone_number)}</code>",
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            return
+        
+        # Format messages
+        message_text = f"📱 <b>SMS Messages for {escape_html(phone_number)}</b>\n"
+        message_text += f"Found {len(actual_messages)} message(s)\n\n"
+        
+        for i, msg_data in enumerate(actual_messages, 1):
+            time = msg_data[0] if len(msg_data) > 0 else "N/A"
+            sender_id = msg_data[3] if len(msg_data) > 3 else "N/A"
+            sms_body = msg_data[5] if len(msg_data) > 5 else "N/A"
+            
+            # Clean up None values
+            if sender_id is None:
+                sender_id = "Unknown"
+            if sms_body is None:
+                sms_body = "(empty)"
+            
+            # Escape HTML in the content
+            time_escaped = escape_html(str(time))
+            sender_escaped = escape_html(str(sender_id))
+            body_escaped = escape_html(str(sms_body))
+            
+            message_text += f"<b>Message {i}:</b>\n"
+            message_text += f"🕒 <b>Time:</b> {time_escaped}\n"
+            message_text += f"📨 <b>Sender:</b> {sender_escaped}\n"
+            message_text += f"💬 <b>Message:</b>\n<pre>{body_escaped}</pre>\n\n"
+            
+            # Telegram has a message length limit
+            if len(message_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
+                message_text += f"<i>... and {len(actual_messages) - i} more message(s)</i>"
+                break
+        
+        # Create keyboard with back button
+        keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            message_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in SMS retry: {e}")
+        
+        # Create keyboard with retry button
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "❌ An error occurred while searching for SMS messages. Please try again.",
+            reply_markup=reply_markup
+        )
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
