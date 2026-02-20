@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import pickle
 import re
@@ -274,7 +276,153 @@ def scrape(session, url):
     return soup
 
 
+def get_sms_ranges(session, base_url, max_results=25, page=1):
+    """
+    Retrieve SMS ranges from the API endpoint.
+    
+    Args:
+        session: Authenticated requests session
+        base_url: Base URL of the application (e.g., http://217.182.195.194/ints)
+        max_results: Maximum number of results per page (default: 25)
+        page: Page number to retrieve (default: 1)
+    
+    Returns:
+        JSON response data or None if request fails
+    """
+    # Construct the SMS ranges API endpoint
+    api_endpoint = f"{base_url}/agent/res/aj_smsranges.php"
+    params = {
+        'max': max_results,
+        'page': page
+    }
+    
+    # Set headers for AJAX request
+    headers = {
+        'Accept': 'application/json, text/javascript, */*;q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': f"{base_url}/agent/MySMSNumbers"
+    }
+    
+    print(f"→ Fetching SMS ranges (page {page}, max {max_results})...")
+    debug_print(f"[DEBUG] API endpoint: {api_endpoint}")
+    debug_print(f"[DEBUG] Parameters: {params}")
+    
+    try:
+        response = session.get(api_endpoint, params=params, headers=headers)
+        response.raise_for_status()
+        
+        # Parse JSON response
+        data = response.json()
+        debug_print(f"[DEBUG] Response status: {response.status_code}")
+        debug_print(f"[DEBUG] Response data type: {type(data)}")
+        
+        return data
+        
+    except requests.HTTPError as e:
+        print(f"[ERROR] Failed to fetch SMS ranges. HTTP Status: {e.response.status_code}")
+        debug_print(f"[DEBUG] Response text: {e.response.text[:500]}")
+        return None
+    except requests.RequestException as e:
+        print(f"[ERROR] Network error while fetching SMS ranges: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Failed to parse JSON response: {e}")
+        debug_print(f"[DEBUG] Response text: {response.text[:500]}")
+        return None
+
+
+def display_sms_ranges(data):
+    """
+    Display SMS ranges data in a formatted way.
+    
+    Args:
+        data: JSON data containing SMS ranges information
+    """
+    if not data:
+        print("[WARNING] No data to display")
+        return
+    
+    print("\n" + "="*60)
+    print("SMS RANGES")
+    print("="*60)
+    
+    # Handle different possible JSON structures
+    if isinstance(data, dict):
+        # If data is paginated, look for common pagination keys
+        if 'data' in data:
+            ranges = data['data']
+            print(f"\nTotal records: {data.get('total', 'N/A')}")
+            print(f"Current page: {data.get('page', 'N/A')}")
+            print(f"Per page: {data.get('per_page', 'N/A')}")
+        elif 'ranges' in data:
+            ranges = data['ranges']
+        elif 'aaData' in data:  # DataTables format
+            ranges = data['aaData']
+        else:
+            ranges = [data]
+    elif isinstance(data, list):
+        ranges = data
+    else:
+        print(f"Data: {json.dumps(data, indent=2)}")
+        return
+    
+    if not ranges:
+        print("\nNo SMS ranges found.")
+        return
+    
+    print(f"\nFound {len(ranges)} SMS range(s):\n")
+    
+    # Display each range
+    for i, item in enumerate(ranges, 1):
+        print(f"{i}. ", end="")
+        if isinstance(item, dict):
+            # Display key-value pairs
+            for key, value in item.items():
+                print(f"{key}: {value}", end="  ")
+            print()
+        elif isinstance(item, list):
+            # Display list items
+            print(" | ".join(str(x) for x in item))
+        else:
+            print(item)
+    
+    print("="*60)
+
+
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='ARGSMS - Login and interact with SMS management system',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scrapper.py                    # Show dashboard (default)
+  python scrapper.py --action dashboard # Show dashboard
+  python scrapper.py --action sms-ranges # Get SMS ranges
+  python scrapper.py --action sms-ranges --max 50 --page 2 # Get page 2 with 50 results
+        """
+    )
+    parser.add_argument(
+        '--action',
+        choices=['dashboard', 'sms-ranges'],
+        default='dashboard',
+        help='Action to perform (default: dashboard)'
+    )
+    parser.add_argument(
+        '--max',
+        type=int,
+        default=25,
+        help='Maximum results per page for sms-ranges (default: 25)'
+    )
+    parser.add_argument(
+        '--page',
+        type=int,
+        default=1,
+        help='Page number for sms-ranges (default: 1)'
+    )
+    
+    args = parser.parse_args()
+    
     if not LOGIN_USERNAME or not PASSWORD or not API_URL:
         print(
             "[ERROR] LOGIN_USERNAME, PASSWORD, and API_URL must be set in the .env file.\n"
@@ -326,17 +474,30 @@ def main():
         # Save cookies for next time
         save_cookies(session)
 
-    # Scrape the dashboard
-    print(f"\n→ Fetching dashboard content from: {dashboard_url}")
-    soup = scrape(session, dashboard_url)
-    page_title = soup.title.string if soup.title and soup.title.string else "N/A"
-    print(f"\n{'='*60}")
-    print(f"Page title: {page_title}")
-    print(f"{'='*60}\n")
+    # Extract base URL from API_URL (remove /login part)
+    base_url = API_URL.rsplit('/', 1)[0] if '/login' in API_URL else API_URL.rsplit('/', 2)[0]
     
-    # Print the page content
-    content = soup.get_text(separator="\n", strip=True)
-    print(content)
+    # Perform the requested action
+    if args.action == 'sms-ranges':
+        # Get SMS ranges
+        data = get_sms_ranges(session, base_url, max_results=args.max, page=args.page)
+        if data:
+            display_sms_ranges(data)
+        else:
+            print("[ERROR] Failed to retrieve SMS ranges")
+            sys.exit(1)
+    else:
+        # Default action: scrape the dashboard
+        print(f"\n→ Fetching dashboard content from: {dashboard_url}")
+        soup = scrape(session, dashboard_url)
+        page_title = soup.title.string if soup.title and soup.title.string else "N/A"
+        print(f"\n{'='*60}")
+        print(f"Page title: {page_title}")
+        print(f"{'='*60}\n")
+        
+        # Print the page content
+        content = soup.get_text(separator="\n", strip=True)
+        print(content)
 
 
 if __name__ == "__main__":
