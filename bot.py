@@ -481,8 +481,12 @@ async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
         await query.answer("❌ Range data not found. Please go back and try again.")
         return
     
+    # Get price for this range
+    price = get_price_for_range(db, range_id)
+    
     # Format the detailed message with HTML
     message = "📱 <b>SMS Range Details</b>\n\n"
+    message += f"💵 <b>Price per SMS</b>: ${price:.2f}\n\n"
     
     if isinstance(range_data, dict):
         for key, value in range_data.items():
