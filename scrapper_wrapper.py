@@ -1,11 +1,14 @@
 """Wrapper functions for the scrapper to be used by the Telegram bot."""
 
 import os
+import logging
 import requests
 from scrapper import login, get_sms_ranges, load_cookies, save_cookies, are_cookies_valid
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 LOGIN_USERNAME = os.getenv("LOGIN_USERNAME")
 PASSWORD = os.getenv("PASSWORD")
@@ -45,8 +48,8 @@ class ScrapperSession:
                     self._authenticated = True
                     self._extract_base_url()
                     return True
-            except Exception:
-                pass
+            except requests.RequestException as e:
+                logger.warning(f"Cookie validation failed: {e}")
         
         # If cookies not valid, perform login
         try:
@@ -56,7 +59,7 @@ class ScrapperSession:
             self._extract_base_url()
             return True
         except Exception as e:
-            print(f"Authentication failed: {e}")
+            logger.error(f"Authentication failed: {e}")
             return False
     
     def _extract_base_url(self):
@@ -74,7 +77,7 @@ class ScrapperSession:
             data = get_sms_ranges(self.session, self.base_url, max_results=max_results, page=page)
             return data
         except Exception as e:
-            print(f"Error getting SMS ranges: {e}")
+            logger.error(f"Error getting SMS ranges: {e}")
             # Reset authentication flag to force re-login on next attempt
             self._authenticated = False
             return None

@@ -5,8 +5,28 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from dotenv import load_dotenv
+
+load_dotenv()
 
 Base = declarative_base()
+
+
+def get_admin_telegram_ids():
+    """Get list of admin Telegram IDs from environment."""
+    admin_ids_str = os.getenv("ADMIN_TELEGRAM_IDS", "")
+    if not admin_ids_str:
+        return []
+    
+    admin_ids = []
+    for id_str in admin_ids_str.split(","):
+        id_str = id_str.strip()
+        if id_str:
+            try:
+                admin_ids.append(int(id_str))
+            except ValueError:
+                pass
+    return admin_ids
 
 
 class User(Base):
@@ -43,12 +63,12 @@ class AccessLog(Base):
 
 
 def init_db(db_path='bot.db'):
-    """Initialize the database and create tables."""
+    """Initialize the database and create tables. Returns a session factory."""
     db_url = f'sqlite:///{db_path}'
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    return Session()
+    SessionFactory = sessionmaker(bind=engine)
+    return SessionFactory
 
 
 def get_or_create_user(db_session, telegram_id, username=None):
@@ -69,6 +89,12 @@ def log_access(db_session, user, action):
 
 
 def is_user_admin(db_session, telegram_id):
-    """Check if user is an admin."""
+    """Check if user is an admin (checks both environment and database)."""
+    # Check if user is in ADMIN_TELEGRAM_IDS from environment
+    admin_ids = get_admin_telegram_ids()
+    if telegram_id in admin_ids:
+        return True
+    
+    # Also check database for dynamically granted admin status
     user = db_session.query(User).filter_by(telegram_id=telegram_id).first()
     return user and user.is_admin

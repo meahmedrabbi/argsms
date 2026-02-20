@@ -40,63 +40,76 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN must be set in .env file")
 
-# Initialize database
-db_session = init_db()
+# Initialize database session factory
+SessionFactory = init_db()
+
+
+def get_db_session():
+    """Get a new database session."""
+    return SessionFactory()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command."""
     user = update.effective_user
+    db = get_db_session()
     
-    # Get or create user in database
-    db_user = get_or_create_user(db_session, user.id, user.username)
-    log_access(db_session, db_user, "start_command")
-    
-    # Create main menu
-    keyboard = [
-        [InlineKeyboardButton("📱 View SMS Ranges", callback_data="view_sms_ranges")],
-        [InlineKeyboardButton("ℹ️ About", callback_data="about")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    welcome_message = (
-        f"👋 Welcome to ARGSMS Bot, {user.first_name}!\n\n"
-        "This bot allows you to view available SMS ranges.\n"
-        "Use the menu below to navigate:"
-    )
-    
-    await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+    try:
+        # Get or create user in database
+        db_user = get_or_create_user(db, user.id, user.username)
+        log_access(db, db_user, "start_command")
+        
+        # Create main menu
+        keyboard = [
+            [InlineKeyboardButton("📱 View SMS Ranges", callback_data="view_sms_ranges")],
+            [InlineKeyboardButton("ℹ️ About", callback_data="about")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        welcome_message = (
+            f"👋 Welcome to ARGSMS Bot, {user.first_name}!\n\n"
+            "This bot allows you to view available SMS ranges.\n"
+            "Use the menu below to navigate:"
+        )
+        
+        await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+    finally:
+        db.close()
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /admin command for admin panel."""
     user = update.effective_user
+    db = get_db_session()
     
-    # Check if user is admin
-    if not is_user_admin(db_session, user.id):
-        await update.message.reply_text("❌ You don't have admin privileges.")
-        return
-    
-    db_user = get_or_create_user(db_session, user.id, user.username)
-    log_access(db_session, db_user, "admin_panel_access")
-    
-    # Create admin panel keyboard
-    keyboard = [
-        [InlineKeyboardButton("👥 List Users", callback_data="admin_list_users")],
-        [InlineKeyboardButton("🔑 Manage Admins", callback_data="admin_manage_admins")],
-        [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
-        [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    admin_message = (
-        "🔐 Admin Panel\n\n"
-        "Welcome to the admin panel. Select an option:"
-    )
-    
-    await update.message.reply_text(admin_message, reply_markup=reply_markup)
+    try:
+        # Check if user is admin
+        if not is_user_admin(db, user.id):
+            await update.message.reply_text("❌ You don't have admin privileges.")
+            return
+        
+        db_user = get_or_create_user(db, user.id, user.username)
+        log_access(db, db_user, "admin_panel_access")
+        
+        # Create admin panel keyboard
+        keyboard = [
+            [InlineKeyboardButton("👥 List Users", callback_data="admin_list_users")],
+            [InlineKeyboardButton("🔑 Manage Admins", callback_data="admin_manage_admins")],
+            [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
+            [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        admin_message = (
+            "🔐 Admin Panel\n\n"
+            "Welcome to the admin panel. Select an option:"
+        )
+        
+        await update.message.reply_text(admin_message, reply_markup=reply_markup)
+    finally:
+        db.close()
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,46 +120,52 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Answer the callback query to remove loading state
     await query.answer()
     
-    # Get or create user
-    db_user = get_or_create_user(db_session, user.id, user.username)
-    
-    callback_data = query.data
-    
-    # Main menu callbacks
-    if callback_data == "view_sms_ranges":
-        await view_sms_ranges_callback(query, context, db_user)
-    elif callback_data == "about":
-        await about_callback(query, context, db_user)
-    elif callback_data == "back_to_main":
-        await back_to_main_callback(query, context, db_user)
-    
-    # Admin panel callbacks
-    elif callback_data == "admin_list_users":
-        await admin_list_users_callback(query, context, db_user)
-    elif callback_data == "admin_manage_admins":
-        await admin_manage_admins_callback(query, context, db_user)
-    elif callback_data == "admin_view_stats":
-        await admin_view_stats_callback(query, context, db_user)
-    
-    # Pagination callbacks
-    elif callback_data.startswith("sms_page_"):
-        page = int(callback_data.split("_")[2])
-        await view_sms_ranges_callback(query, context, db_user, page=page)
-    
-    # Make user admin callback
-    elif callback_data.startswith("make_admin_"):
-        user_id = int(callback_data.split("_")[2])
-        await make_admin_callback(query, context, db_user, user_id)
-    
-    # Remove admin callback
-    elif callback_data.startswith("remove_admin_"):
-        user_id = int(callback_data.split("_")[2])
-        await remove_admin_callback(query, context, db_user, user_id)
+    db = get_db_session()
+    try:
+        # Get or create user
+        db_user = get_or_create_user(db, user.id, user.username)
+        
+        callback_data = query.data
+        
+        # Main menu callbacks
+        if callback_data == "view_sms_ranges":
+            await view_sms_ranges_callback(query, context, db, db_user)
+        elif callback_data == "about":
+            await about_callback(query, context, db, db_user)
+        elif callback_data == "back_to_main":
+            await back_to_main_callback(query, context, db, db_user)
+        
+        # Admin panel callbacks
+        elif callback_data == "admin_list_users":
+            await admin_list_users_callback(query, context, db, db_user)
+        elif callback_data == "admin_manage_admins":
+            await admin_manage_admins_callback(query, context, db, db_user)
+        elif callback_data == "admin_view_stats":
+            await admin_view_stats_callback(query, context, db, db_user)
+        elif callback_data == "admin_back":
+            await admin_back_callback(query, context, db, db_user)
+        
+        # Pagination callbacks
+        elif callback_data.startswith("sms_page_"):
+            page = int(callback_data.split("_")[2])
+            await view_sms_ranges_callback(query, context, db, db_user, page=page)
+        
+        # Make user admin callback
+        elif callback_data.startswith("make_admin_"):
+            user_id = int(callback_data.split("_")[2])
+            await make_admin_callback(query, context, db, db_user, user_id)
+        
+        # Remove admin callback
+        elif callback_data.startswith("remove_admin_"):
+            user_id = int(callback_data.split("_")[2])
+            await remove_admin_callback(query, context, db, db_user, user_id)
+    finally:
+        db.close()
 
 
-async def view_sms_ranges_callback(query, context, db_user, page=1):
+async def view_sms_ranges_callback(query, context, db, db_user, page=1):
     """Show SMS ranges to the user."""
-    log_access(db_session, db_user, f"view_sms_ranges_page_{page}")
+    log_access(db, db_user, f"view_sms_ranges_page_{page}")
     
     # Get scrapper session and fetch data
     scrapper = get_scrapper_session()
@@ -214,9 +233,9 @@ async def view_sms_ranges_callback(query, context, db_user, page=1):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def about_callback(query, context, db_user):
+async def about_callback(query, context, db, db_user):
     """Show about information."""
-    log_access(db_session, db_user, "about")
+    log_access(db, db_user, "about")
     
     message = (
         "ℹ️ About ARGSMS Bot\n\n"
@@ -233,7 +252,7 @@ async def about_callback(query, context, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def back_to_main_callback(query, context, db_user):
+async def back_to_main_callback(query, context, db, db_user):
     """Return to main menu."""
     keyboard = [
         [InlineKeyboardButton("📱 View SMS Ranges", callback_data="view_sms_ranges")],
@@ -251,16 +270,16 @@ async def back_to_main_callback(query, context, db_user):
     await query.edit_message_text(welcome_message, reply_markup=reply_markup)
 
 
-async def admin_list_users_callback(query, context, db_user):
+async def admin_list_users_callback(query, context, db, db_user):
     """List all users (admin only)."""
     if not db_user.is_admin:
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    log_access(db_session, db_user, "admin_list_users")
+    log_access(db, db_user, "admin_list_users")
     
     # Get all users
-    users = db_session.query(User).order_by(User.created_at.desc()).limit(20).all()
+    users = db.query(User).order_by(User.created_at.desc()).limit(20).all()
     
     message = "👥 User List (Last 20)\n\n"
     for user in users:
@@ -278,16 +297,16 @@ async def admin_list_users_callback(query, context, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def admin_manage_admins_callback(query, context, db_user):
+async def admin_manage_admins_callback(query, context, db, db_user):
     """Manage admin users (admin only)."""
     if not db_user.is_admin:
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    log_access(db_session, db_user, "admin_manage_admins")
+    log_access(db, db_user, "admin_manage_admins")
     
     # Get all users
-    users = db_session.query(User).order_by(User.created_at.desc()).limit(10).all()
+    users = db.query(User).order_by(User.created_at.desc()).limit(10).all()
     
     message = "🔑 Manage Admins\n\n"
     message += "Select a user to toggle admin status:\n\n"
@@ -311,23 +330,23 @@ async def admin_manage_admins_callback(query, context, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def admin_view_stats_callback(query, context, db_user):
+async def admin_view_stats_callback(query, context, db, db_user):
     """View statistics (admin only)."""
     if not db_user.is_admin:
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    log_access(db_session, db_user, "admin_view_stats")
+    log_access(db, db_user, "admin_view_stats")
     
     # Get statistics
-    total_users = db_session.query(User).count()
-    admin_users = db_session.query(User).filter_by(is_admin=True).count()
+    total_users = db.query(User).count()
+    admin_users = db.query(User).filter_by(is_admin=True).count()
     
     from sqlalchemy import func
     from database import AccessLog
     
     today = datetime.utcnow().date()
-    today_logs = db_session.query(AccessLog).filter(
+    today_logs = db.query(AccessLog).filter(
         func.date(AccessLog.timestamp) == today
     ).count()
     
@@ -344,26 +363,26 @@ async def admin_view_stats_callback(query, context, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def make_admin_callback(query, context, db_user, target_user_id):
+async def make_admin_callback(query, context, db, db_user, target_user_id):
     """Make a user admin (admin only)."""
     if not db_user.is_admin:
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    target_user = db_session.query(User).filter_by(id=target_user_id).first()
+    target_user = db.query(User).filter_by(id=target_user_id).first()
     if target_user:
         target_user.is_admin = True
-        db_session.commit()
-        log_access(db_session, db_user, f"make_admin_{target_user.telegram_id}")
+        db.commit()
+        log_access(db, db_user, f"make_admin_{target_user.telegram_id}")
         await query.answer(f"✅ User {target_user.telegram_id} is now an admin")
     else:
         await query.answer("❌ User not found")
     
     # Refresh the manage admins view
-    await admin_manage_admins_callback(query, context, db_user)
+    await admin_manage_admins_callback(query, context, db, db_user)
 
 
-async def remove_admin_callback(query, context, db_user, target_user_id):
+async def remove_admin_callback(query, context, db, db_user, target_user_id):
     """Remove admin status from a user (admin only)."""
     if not db_user.is_admin:
         await query.answer("❌ Admin access required", show_alert=True)
@@ -374,25 +393,25 @@ async def remove_admin_callback(query, context, db_user, target_user_id):
         await query.answer("❌ You cannot remove your own admin status")
         return
     
-    target_user = db_session.query(User).filter_by(id=target_user_id).first()
+    target_user = db.query(User).filter_by(id=target_user_id).first()
     if target_user:
         target_user.is_admin = False
-        db_session.commit()
-        log_access(db_session, db_user, f"remove_admin_{target_user.telegram_id}")
+        db.commit()
+        log_access(db, db_user, f"remove_admin_{target_user.telegram_id}")
         await query.answer(f"✅ Removed admin status from user {target_user.telegram_id}")
     else:
         await query.answer("❌ User not found")
     
     # Refresh the manage admins view
-    await admin_manage_admins_callback(query, context, db_user)
+    await admin_manage_admins_callback(query, context, db, db_user)
 
 
-async def admin_back_callback(query, context):
+async def admin_back_callback(query, context, db, db_user):
     """Return to admin panel."""
     user = query.from_user
     
     # Check if user is admin
-    if not is_user_admin(db_session, user.id):
+    if not is_user_admin(db, user.id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
@@ -413,32 +432,6 @@ async def admin_back_callback(query, context):
     await query.edit_message_text(admin_message, reply_markup=reply_markup)
 
 
-async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main callback query handler."""
-    query = update.callback_query
-    user = query.from_user
-    
-    # Get user from database
-    db_user = get_or_create_user(db_session, user.id, user.username)
-    
-    callback_data = query.data
-    
-    # Route to appropriate handler
-    if callback_data == "back_to_main":
-        await back_to_main_callback(query, context, db_user)
-    elif callback_data == "admin_back":
-        await admin_back_callback(query, context)
-    elif callback_data.startswith("make_admin_"):
-        user_id = int(callback_data.split("_")[2])
-        await make_admin_callback(query, context, db_user, user_id)
-    elif callback_data.startswith("remove_admin_"):
-        user_id = int(callback_data.split("_")[2])
-        await remove_admin_callback(query, context, db_user, user_id)
-    else:
-        # Use the button_callback handler for other callbacks
-        await button_callback(update, context)
-
-
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors."""
     logger.error(f"Update {update} caused error {context.error}")
@@ -454,7 +447,7 @@ def main():
     application.add_handler(CommandHandler("admin", admin_command))
     
     # Register callback query handler
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    application.add_handler(CallbackQueryHandler(button_callback))
     
     # Register error handler
     application.add_error_handler(error_handler)

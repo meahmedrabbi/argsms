@@ -15,7 +15,7 @@ A Telegram bot for managing and viewing SMS ranges from the ARGSMS system.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/meahmedrabbi/argsms.git
+git clone <repository-url>
 cd argsms
 ```
 
@@ -33,15 +33,29 @@ Edit `.env` and add your credentials:
 ```
 LOGIN_USERNAME=your_username
 PASSWORD=your_password
-API_URL=http://217.182.195.194/ints/login
+API_URL=https://your-sms-api-url/login
 DEBUG_MODE=false
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+ADMIN_TELEGRAM_IDS=123456789,987654321
 ```
+
+**Configuration Details:**
+- `LOGIN_USERNAME`: Your SMS system username
+- `PASSWORD`: Your SMS system password
+- `API_URL`: The login URL for your SMS system
+- `DEBUG_MODE`: Enable debug logging (true/false)
+- `TELEGRAM_BOT_TOKEN`: Your Telegram bot token from BotFather
+- `ADMIN_TELEGRAM_IDS`: Comma-separated list of Telegram user IDs who should have admin access
 
 To get a Telegram bot token:
 1. Message [@BotFather](https://t.me/botfather) on Telegram
 2. Send `/newbot` and follow the instructions
 3. Copy the token and add it to your `.env` file
+
+To find your Telegram user ID:
+1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
+2. It will reply with your user ID
+3. Add this ID to `ADMIN_TELEGRAM_IDS` in your `.env` file
 
 ## Usage
 
@@ -73,21 +87,34 @@ The bot will:
 - **Manage Admins**: Grant or revoke admin privileges
 - **View Stats**: See bot usage statistics
 
-### Making the First Admin
+### Setting Up Admins
 
-When the bot starts, the first user needs to be made an admin manually:
+There are two ways to make users admins:
 
-1. Start the bot and send `/start` to register yourself
-2. Note your Telegram user ID from the bot logs
-3. Access the database directly:
+#### Option 1: Configure Admin IDs in Environment (Recommended)
 
-```bash
-python -c "from database import init_db, User; db = init_db(); user = db.query(User).filter_by(telegram_id=YOUR_TELEGRAM_ID).first(); user.is_admin = True; db.commit(); print('Admin status granted')"
+Add admin Telegram user IDs to your `.env` file:
+```
+ADMIN_TELEGRAM_IDS=123456789,987654321
 ```
 
-Replace `YOUR_TELEGRAM_ID` with your actual Telegram user ID.
+To find your Telegram user ID:
+1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
+2. It will reply with your user ID
+3. Add this ID to `ADMIN_TELEGRAM_IDS` in your `.env` file
 
-Alternatively, you can use a database browser like DB Browser for SQLite to modify the `users` table.
+#### Option 2: Grant Admin Status via Database
+
+Use the `make_admin.py` helper script:
+```bash
+# List all users
+python make_admin.py --list
+
+# Make a specific user admin
+python make_admin.py <telegram_user_id>
+```
+
+Note: Users configured in the environment via `ADMIN_TELEGRAM_IDS` have permanent admin access. Users made admin via the database can have their admin status revoked through the bot's admin panel.
 
 ## Database Schema
 
