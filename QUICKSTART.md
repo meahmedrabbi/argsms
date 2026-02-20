@@ -41,7 +41,13 @@ PASSWORD=your_sms_system_password
 API_URL=your_sms_api_login_url
 TELEGRAM_BOT_TOKEN=your_bot_token_from_step_1
 ADMIN_TELEGRAM_IDS=your_user_id_from_step_2
+FORCE_JOIN_CHANNEL_ID=@yourchannel (optional)
 ```
+
+**Important Configuration Notes:**
+- `FORCE_JOIN_CHANNEL_ID` is optional. If set, users must join that channel to use the bot.
+- To find a channel ID, go to the channel and look at its username (starts with @).
+- Multiple admin IDs can be comma-separated: `123456789,987654321`
 
 ## Step 4: Run the Bot
 
@@ -59,7 +65,27 @@ INFO - Starting ARGSMS Telegram Bot...
 1. Open Telegram and search for your bot (the name you created in Step 1)
 2. Send `/start` to begin
 3. Use the inline menu to navigate
-4. As an admin, use `/admin` to access the admin panel
+
+**As a regular user:**
+- View SMS ranges and request numbers
+- Check your profile for balance and stats
+- Request balance recharge
+- Search phone numbers for SMS
+
+**As an admin:**
+- Use `/admin` to access the admin panel
+- Manage users (ban/unban)
+- Manage balance with `/addbalance` and `/deductbalance` commands
+- Set price ranges with `/setprice` command
+- View comprehensive statistics
+
+## Initial Setup for Admins
+
+After starting the bot for the first time:
+
+1. **Set Default Prices**: Use `/setprice default 1.0` to set a default price
+2. **Add Specific Prices**: Use `/setprice russia 2.5` for country-specific pricing
+3. **Add Initial Balance**: Give yourself some test balance with `/addbalance <your_id> 100`
 
 ## Troubleshooting
 
