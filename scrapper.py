@@ -353,7 +353,14 @@ def display_sms_ranges(data):
     # Handle different possible JSON structures
     if isinstance(data, dict):
         # If data is paginated, look for common pagination keys
-        if 'data' in data:
+        if 'results' in data:
+            # Handle structure with 'results' and 'pagination' keys
+            ranges = data['results']
+            pagination = data.get('pagination', {})
+            if pagination:
+                has_more = pagination.get('more', False)
+                print(f"\nPagination: {'More pages available' if has_more else 'Last page'}")
+        elif 'data' in data:
             ranges = data['data']
             print(f"\nTotal records: {data.get('total', 'N/A')}")
             print(f"Current page: {data.get('page', 'N/A')}")
