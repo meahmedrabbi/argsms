@@ -145,6 +145,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif callback_data == "admin_back":
             await admin_back_callback(query, context, db, db_user)
         
+        # SMS range detail view
+        elif callback_data.startswith("sms_range_"):
+            range_id = callback_data.replace("sms_range_", "")
+            await view_sms_range_detail_callback(query, context, db, db_user, range_id)
+        
         # Pagination callbacks
         elif callback_data.startswith("sms_page_"):
             page = int(callback_data.split("_")[2])
@@ -177,9 +182,6 @@ async def view_sms_ranges_callback(query, context, db, db_user, page=1):
         )
         return
     
-    # Parse the data
-    message = "📱 Available SMS Ranges\n\n"
-    
     # Handle different possible JSON structures
     ranges = []
     has_more = False
@@ -198,25 +200,55 @@ async def view_sms_ranges_callback(query, context, db, db_user, page=1):
     elif isinstance(data, list):
         ranges = data
     
+    # Create message header
+    message = f"📱 Available SMS Ranges (Page {page})\n\n"
+    
     if not ranges:
-        message += "No SMS ranges available.\n"
+        message += "No SMS ranges available."
     else:
-        for i, item in enumerate(ranges, 1):
-            message += f"{(page-1)*10 + i}. "
-            if isinstance(item, dict):
-                # Format dict items
-                for key, value in item.items():
-                    message += f"{key}: {value}  "
-                message += "\n"
-            elif isinstance(item, list):
-                message += " | ".join(str(x) for x in item) + "\n"
-            else:
-                message += str(item) + "\n"
+        message += f"Select a range to view details ({len(ranges)} ranges):"
     
-    # Create pagination keyboard
+    # Create keyboard with one button per range
     keyboard = []
-    nav_buttons = []
     
+    for i, item in enumerate(ranges, 1):
+        # Format button text based on item structure
+        button_text = ""
+        range_id = None
+        
+        if isinstance(item, dict):
+            # Extract id and title if available
+            range_id = item.get('id') or item.get('range_id') or str((page-1)*10 + i)
+            title = item.get('title', '')
+            
+            # Create concise button text
+            if title:
+                # Truncate title if too long (Telegram has button text limits)
+                button_text = f"{range_id}: {title[:50]}" if len(title) > 50 else f"{range_id}: {title}"
+            else:
+                # If no title, show all key-value pairs truncated
+                info = " - ".join(f"{k}: {v}" for k, v in list(item.items())[:3])
+                button_text = info[:60]
+        elif isinstance(item, list):
+            range_id = str((page-1)*10 + i)
+            info = " | ".join(str(x) for x in item[:3])
+            button_text = info[:60]
+        else:
+            range_id = str((page-1)*10 + i)
+            button_text = str(item)[:60]
+        
+        # Store the full item data in context for later retrieval
+        if not hasattr(context, 'bot_data'):
+            context.bot_data = {}
+        if 'sms_ranges' not in context.bot_data:
+            context.bot_data['sms_ranges'] = {}
+        context.bot_data['sms_ranges'][str(range_id)] = item
+        
+        # Add button for this range
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"sms_range_{range_id}")])
+    
+    # Add pagination controls
+    nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"sms_page_{page-1}"))
     
@@ -231,6 +263,39 @@ async def view_sms_ranges_callback(query, context, db, db_user, page=1):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup)
+
+
+async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
+    """Show detailed information about a specific SMS range."""
+    log_access(db, db_user, f"view_sms_range_detail_{range_id}")
+    
+    # Try to retrieve the range data from context
+    range_data = None
+    if hasattr(context, 'bot_data') and 'sms_ranges' in context.bot_data:
+        range_data = context.bot_data['sms_ranges'].get(str(range_id))
+    
+    if not range_data:
+        await query.answer("❌ Range data not found. Please go back and try again.")
+        return
+    
+    # Format the detailed message
+    message = f"📱 SMS Range Details\n\n"
+    
+    if isinstance(range_data, dict):
+        for key, value in range_data.items():
+            # Format key to be more readable
+            formatted_key = key.replace('_', ' ').title()
+            message += f"**{formatted_key}**: {value}\n"
+    elif isinstance(range_data, list):
+        message += " | ".join(str(x) for x in range_data)
+    else:
+        message += str(range_data)
+    
+    # Add back button
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
 
 
 async def about_callback(query, context, db, db_user):
