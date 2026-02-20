@@ -140,10 +140,47 @@ class RechargeRequest(Base):
         return f"<RechargeRequest(user_id={self.user_id}, amount={self.amount}, status={self.status})>"
 
 
+def migrate_database(engine):
+    """Migrate existing database to add new columns."""
+    import sqlite3
+    
+    db_path = engine.url.database
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Check and add missing columns to users table
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'is_banned' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT 0 NOT NULL")
+        
+        if 'balance' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0 NOT NULL")
+        
+        if 'total_spent' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN total_spent REAL DEFAULT 0.0 NOT NULL")
+        
+        if 'total_sms_received' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN total_sms_received INTEGER DEFAULT 0 NOT NULL")
+        
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def init_db(db_path='bot.db'):
     """Initialize the database and create tables. Returns a session factory."""
     db_url = f'sqlite:///{db_path}'
     engine = create_engine(db_url, echo=False)
+    
+    # Migrate existing database
+    migrate_database(engine)
+    
+    # Create new tables
     Base.metadata.create_all(engine)
     SessionFactory = sessionmaker(bind=engine)
     return SessionFactory
