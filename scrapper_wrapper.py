@@ -3,7 +3,7 @@
 import os
 import logging
 import requests
-from scrapper import login, get_sms_ranges, get_sms_numbers, load_cookies, save_cookies, are_cookies_valid
+from scrapper import login, get_sms_ranges, get_sms_numbers, get_sms_messages, load_cookies, save_cookies, are_cookies_valid
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -92,6 +92,22 @@ class ScrapperSession:
             return data
         except Exception as e:
             logger.error(f"Error getting SMS numbers: {e}")
+            # Reset authentication flag to force re-login on next attempt
+            self._authenticated = False
+            return None
+    
+    def get_sms_messages(self, phone_number, date_from=None, date_to=None, start=0, length=100):
+        """Get SMS messages for a specific phone number from the API."""
+        if not self.ensure_authenticated():
+            return None
+        
+        try:
+            data = get_sms_messages(self.session, self.base_url, phone_number, 
+                                   date_from=date_from, date_to=date_to, 
+                                   start=start, length=length)
+            return data
+        except Exception as e:
+            logger.error(f"Error getting SMS messages: {e}")
             # Reset authentication flag to force re-login on next attempt
             self._authenticated = False
             return None

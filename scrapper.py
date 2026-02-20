@@ -4,6 +4,7 @@ import os
 import pickle
 import re
 import sys
+from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
@@ -407,6 +408,106 @@ def get_sms_numbers(session, base_url, range_id, start=0, length=25):
         return None
     except requests.RequestException as e:
         print(f"[ERROR] Network error while fetching SMS numbers: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Failed to parse JSON response: {e}")
+        debug_print(f"[DEBUG] Response text: {response_text[:500]}")
+        return None
+
+
+def get_sms_messages(session, base_url, phone_number, date_from=None, date_to=None, start=0, length=100):
+    """
+    Retrieve SMS messages for a specific phone number from the API endpoint.
+    
+    Args:
+        session: Authenticated requests session
+        base_url: Base URL of the application (e.g., http://217.182.195.194/ints)
+        phone_number: Phone number to search for (e.g., "79284702080")
+        date_from: Start date for search (default: today 00:00:00)
+        date_to: End date for search (default: today 23:59:59)
+        start: Starting index for pagination (default: 0)
+        length: Number of results per page (default: 100)
+    
+    Returns:
+        JSON response data or None if request fails
+    """
+    # Construct the SMS CDR API endpoint
+    api_endpoint = f"{base_url}/agent/res/data_smscdr.php"
+    
+    # Set default date range to today if not provided
+    if date_from is None:
+        date_from = datetime.now().strftime("%Y-%m-%d 00:00:00")
+    if date_to is None:
+        date_to = datetime.now().strftime("%Y-%m-%d 23:59:59")
+    
+    # Build DataTables parameters based on the provided URL structure
+    params = {
+        'fdate1': date_from,
+        'fdate2': date_to,
+        'frange': '',
+        'fclient': '',
+        'fnum': '',
+        'fcli': '',
+        'fgdate': '',
+        'fgmonth': '',
+        'fgrange': '',
+        'fgclient': '',
+        'fgnumber': '',
+        'fgcli': '',
+        'fg': '0',
+        'csstr': '9228651df441c24ac61000d59ad3ae3b',  # May need to be dynamic
+        'sEcho': '1',
+        'iColumns': '9',
+        'sColumns': ',,,,,,,,',
+        'iDisplayStart': start,
+        'iDisplayLength': length,
+        'sSearch': phone_number,  # Search by phone number
+        'bRegex': 'false',
+        'iSortCol_0': '0',
+        'sSortDir_0': 'desc',
+        'iSortingCols': '1',
+    }
+    
+    # Add column-specific parameters for 9 columns
+    for i in range(9):
+        params[f'mDataProp_{i}'] = str(i)
+        params[f'sSearch_{i}'] = ''
+        params[f'bRegex_{i}'] = 'false'
+        params[f'bSearchable_{i}'] = 'true'
+        params[f'bSortable_{i}'] = 'true' if i < 8 else 'false'
+    
+    # Set headers for AJAX request
+    headers = {
+        'Accept': 'application/json, text/javascript, */*;q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': f"{base_url}/agent/MySMSNumbers"
+    }
+    
+    print(f"→ Searching SMS messages for number {phone_number}...")
+    debug_print(f"[DEBUG] API endpoint: {api_endpoint}")
+    debug_print(f"[DEBUG] Date range: {date_from} to {date_to}")
+    debug_print(f"[DEBUG] Parameters: {params}")
+    
+    try:
+        response = session.get(api_endpoint, params=params, headers=headers)
+        response.raise_for_status()
+        
+        # Store response text before parsing (for error handling)
+        response_text = response.text
+        
+        # Parse JSON response
+        data = response.json()
+        debug_print(f"[DEBUG] Response status: {response.status_code}")
+        debug_print(f"[DEBUG] Response data type: {type(data)}")
+        
+        return data
+        
+    except requests.HTTPError as e:
+        print(f"[ERROR] Failed to fetch SMS messages. HTTP Status: {e.response.status_code}")
+        debug_print(f"[DEBUG] Response text: {e.response.text[:500]}")
+        return None
+    except requests.RequestException as e:
+        print(f"[ERROR] Network error while fetching SMS messages: {e}")
         return None
     except json.JSONDecodeError as e:
         print(f"[ERROR] Failed to parse JSON response: {e}")

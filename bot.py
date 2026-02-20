@@ -4,6 +4,7 @@ import os
 import json
 import logging
 import random
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -633,6 +634,147 @@ async def admin_back_callback(query, context, db, db_user):
     await query.edit_message_text(admin_message, reply_markup=reply_markup)
 
 
+    await query.edit_message_text(admin_message, reply_markup=reply_markup)
+
+
+def is_phone_number(text):
+    """Check if the text is a valid phone number."""
+    # Remove any whitespace or special characters
+    cleaned = re.sub(r'[^\d+]', '', text)
+    
+    # Check if it's a valid phone number (at least 10 digits, optionally starting with +)
+    # Pattern: optional +, then 10-15 digits
+    pattern = r'^\+?\d{10,15}$'
+    return bool(re.match(pattern, cleaned))
+
+
+async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle phone number search when user sends a phone number."""
+    message = update.message
+    if not message or not message.text:
+        return
+    
+    text = message.text.strip()
+    
+    # Check if the message is a phone number
+    if not is_phone_number(text):
+        return
+    
+    # Extract clean phone number
+    phone_number = re.sub(r'[^\d+]', '', text)
+    
+    # Get database session
+    with get_db_session() as db:
+        # Get or create user
+        user = get_or_create_user(
+            db,
+            telegram_id=message.from_user.id,
+            username=message.from_user.username or message.from_user.first_name
+        )
+        
+        # Log the search
+        log_access(db, user.id, f"SMS search: {phone_number}")
+        
+        # Send "searching" message
+        searching_msg = await message.reply_text(
+            f"🔍 Searching SMS messages for <code>{escape_html(phone_number)}</code>...",
+            parse_mode='HTML'
+        )
+        
+        try:
+            # Get scrapper session
+            scrapper = get_scrapper_session()
+            
+            # Search for SMS messages
+            data = scrapper.get_sms_messages(phone_number)
+            
+            if not data:
+                await searching_msg.edit_text(
+                    "❌ Failed to retrieve SMS messages. Please try again later."
+                )
+                return
+            
+            # Parse response
+            total_records = data.get('iTotalRecords', '0')
+            if isinstance(total_records, str):
+                total_records = int(total_records) if total_records.isdigit() else 0
+            
+            messages = data.get('aaData', [])
+            
+            # Filter out the stats row (last row is usually stats)
+            # Stats row has unusual structure with comma-separated values
+            actual_messages = []
+            for msg in messages:
+                if isinstance(msg, list) and len(msg) >= 6:
+                    # Check if it's not the stats row
+                    if not (isinstance(msg[0], str) and ',' in msg[0] and '%' in msg[0]):
+                        actual_messages.append(msg)
+            
+            if not actual_messages:
+                await searching_msg.edit_text(
+                    f"📭 No SMS messages found for <code>{escape_html(phone_number)}</code>",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Format messages
+            # Response structure based on API:
+            # [0]: Time (e.g., "2026-02-20 15:51:22")
+            # [1]: Range/Title (e.g., "Russia Megafon Lion 79 14 Nov 25")
+            # [2]: Phone Number
+            # [3]: Sender ID (e.g., "Facebook", "Instagram")
+            # [4]: null or other
+            # [5]: SMS Body (e.g., "593990 is your Instagram code Dont share it #ig")
+            # [6]: Currency symbol
+            # [7]: Price
+            # [8]: Other
+            
+            message_text = f"📱 <b>SMS Messages for {escape_html(phone_number)}</b>\n"
+            message_text += f"Found {len(actual_messages)} message(s)\n\n"
+            
+            for i, msg_data in enumerate(actual_messages, 1):
+                time = msg_data[0] if len(msg_data) > 0 else "N/A"
+                sender_id = msg_data[3] if len(msg_data) > 3 else "N/A"
+                sms_body = msg_data[5] if len(msg_data) > 5 else "N/A"
+                
+                # Clean up None values
+                if sender_id is None:
+                    sender_id = "Unknown"
+                if sms_body is None:
+                    sms_body = "(empty)"
+                
+                # Escape HTML in the content
+                time_escaped = escape_html(str(time))
+                sender_escaped = escape_html(str(sender_id))
+                body_escaped = escape_html(str(sms_body))
+                
+                message_text += f"<b>Message {i}:</b>\n"
+                message_text += f"🕒 <b>Time:</b> {time_escaped}\n"
+                message_text += f"📨 <b>Sender:</b> {sender_escaped}\n"
+                message_text += f"💬 <b>Message:</b>\n<pre>{body_escaped}</pre>\n\n"
+                
+                # Telegram has a message length limit, so split if needed
+                if len(message_text) > 3500:  # Leave room for more messages indicator
+                    message_text += f"<i>... and {len(actual_messages) - i} more message(s)</i>"
+                    break
+            
+            # Create keyboard with back button
+            keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await searching_msg.edit_text(
+                message_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in phone search: {e}")
+            await searching_msg.edit_text(
+                "❌ An error occurred while searching for SMS messages. Please try again later."
+            )
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors."""
     logger.error(f"Update {update} caused error {context.error}")
@@ -646,6 +788,9 @@ def main():
     # Register command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("admin", admin_command))
+    
+    # Register message handler for phone number search
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_search))
     
     # Register callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
