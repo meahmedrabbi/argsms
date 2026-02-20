@@ -131,10 +131,10 @@ class RechargeRequest(Base):
     admin_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     processed_at = Column(DateTime, nullable=True)
-    processed_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    processed_by = Column(Integer, nullable=True)  # Store admin user ID directly, no FK
     
     # Relationships
-    user = relationship('User', back_populates='recharge_requests', foreign_keys=[user_id])
+    user = relationship('User', back_populates='recharge_requests')
     
     def __repr__(self):
         return f"<RechargeRequest(user_id={self.user_id}, amount={self.amount}, status={self.status})>"

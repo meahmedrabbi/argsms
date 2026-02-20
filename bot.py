@@ -39,7 +39,8 @@ from database import (
     NumberHold,
     PriceRange,
     Transaction,
-    RechargeRequest
+    RechargeRequest,
+    AccessLog
 )
 from scrapper_wrapper import get_scrapper_session
 
