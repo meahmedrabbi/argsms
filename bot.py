@@ -272,7 +272,7 @@ async def back_to_main_callback(query, context, db, db_user):
 
 async def admin_list_users_callback(query, context, db, db_user):
     """List all users (admin only)."""
-    if not db_user.is_admin:
+    if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
@@ -299,7 +299,7 @@ async def admin_list_users_callback(query, context, db, db_user):
 
 async def admin_manage_admins_callback(query, context, db, db_user):
     """Manage admin users (admin only)."""
-    if not db_user.is_admin:
+    if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
@@ -332,7 +332,7 @@ async def admin_manage_admins_callback(query, context, db, db_user):
 
 async def admin_view_stats_callback(query, context, db, db_user):
     """View statistics (admin only)."""
-    if not db_user.is_admin:
+    if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
@@ -365,7 +365,7 @@ async def admin_view_stats_callback(query, context, db, db_user):
 
 async def make_admin_callback(query, context, db, db_user, target_user_id):
     """Make a user admin (admin only)."""
-    if not db_user.is_admin:
+    if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
@@ -384,7 +384,7 @@ async def make_admin_callback(query, context, db, db_user, target_user_id):
 
 async def remove_admin_callback(query, context, db, db_user, target_user_id):
     """Remove admin status from a user (admin only)."""
-    if not db_user.is_admin:
+    if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
