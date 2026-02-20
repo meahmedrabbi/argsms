@@ -113,7 +113,10 @@ The bot will:
 ### Bot Features
 
 #### For Regular Users:
-- **View SMS Ranges**: Browse available SMS ranges with pagination
+- **View SMS Ranges**: Browse available SMS ranges as individual buttons with pagination
+  - Each range is displayed as a clickable button
+  - Click any button to view detailed information about that range
+  - Navigate between pages with Previous/Next buttons
 - **About**: Learn about the bot and available commands
 
 #### For Administrators:
