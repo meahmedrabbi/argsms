@@ -241,8 +241,7 @@ def create_number_holds(db_session, user, phone_numbers, range_id):
     # Release all non-permanent holds for this user
     db_session.query(NumberHold).filter_by(
         user_id=user.id,
-        is_permanent=False
-    ).delete()
+    ).filter(NumberHold.is_permanent.is_(False)).delete()
     
     # Create new holds
     holds = []
@@ -264,9 +263,8 @@ def mark_number_permanent(db_session, user, phone_number):
     """Mark a number hold as permanent when SMS is received."""
     hold = db_session.query(NumberHold).filter_by(
         user_id=user.id,
-        phone_number=str(phone_number),
-        is_permanent=False
-    ).first()
+        phone_number=str(phone_number)
+    ).filter(NumberHold.is_permanent.is_(False)).first()
     
     if hold:
         hold.is_permanent = True
@@ -298,7 +296,7 @@ def cleanup_expired_holds(db_session):
     
     # Delete non-permanent holds where first_retry_time is set and more than 5 minutes ago
     db_session.query(NumberHold).filter(
-        NumberHold.is_permanent == False,
+        NumberHold.is_permanent.is_(False),
         NumberHold.first_retry_time.isnot(None),
         NumberHold.first_retry_time < five_minutes_ago
     ).delete()

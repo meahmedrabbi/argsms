@@ -140,7 +140,8 @@ async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT
         # Check if user has left or is kicked
         if member.status in ['left', 'kicked']:
             # User is not a member, send join prompt
-            keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_JOIN_CHANNEL_ID.lstrip('@')}")]]
+            channel_name = FORCE_JOIN_CHANNEL_ID[1:] if FORCE_JOIN_CHANNEL_ID.startswith('@') else FORCE_JOIN_CHANNEL_ID
+            keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{channel_name}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             message_text = (
@@ -1716,8 +1717,8 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Parse price
             try:
                 price = float(text)
-                if price < 0:
-                    await message.reply_text("❌ Price must be non-negative. Please try again:")
+                if price <= 0:
+                    await message.reply_text("❌ Price must be positive. Please try again:")
                     return
                 
                 pattern = context.user_data.get('price_pattern')
