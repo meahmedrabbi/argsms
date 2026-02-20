@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import random
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -188,10 +189,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # View SMS numbers for a range
         elif callback_data.startswith("view_numbers_"):
-            parts = callback_data.split("_")
-            range_id = parts[2]
-            start = int(parts[3]) if len(parts) > 3 else 0
-            await view_sms_numbers_callback(query, context, db, db_user, range_id, start)
+            range_id = callback_data.replace("view_numbers_", "")
+            await view_sms_numbers_callback(query, context, db, db_user, range_id)
         
         # Pagination callbacks
         elif callback_data.startswith("sms_page_"):
@@ -343,7 +342,7 @@ async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
     
     # Add buttons for actions and navigation
     keyboard = [
-        [InlineKeyboardButton("📞 View Numbers", callback_data=f"view_numbers_{range_id}_0")],
+        [InlineKeyboardButton("📞 View Numbers", callback_data=f"view_numbers_{range_id}")],
         [InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -351,19 +350,18 @@ async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
-async def view_sms_numbers_callback(query, context, db, db_user, range_id, start=0):
+async def view_sms_numbers_callback(query, context, db, db_user, range_id):
     """Show SMS numbers for a specific range."""
-    log_access(db, db_user, f"view_sms_numbers_{range_id}_start_{start}")
+    log_access(db, db_user, f"view_sms_numbers_{range_id}")
     
     # Get scrapper session and fetch numbers
     scrapper = get_scrapper_session()
-    length = 10  # Numbers per page
     
-    # Safety check
-    if length <= 0:
-        length = 10
+    # Fetch a larger batch to randomly select from
+    fetch_length = 100  # Fetch 100 numbers
+    display_count = 20  # Display 20 random numbers
     
-    data = scrapper.get_sms_numbers(range_id, start=start, length=length)
+    data = scrapper.get_sms_numbers(range_id, start=0, length=fetch_length)
     
     if not data:
         await query.edit_message_text(
@@ -387,14 +385,14 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
         except (ValueError, TypeError):
             total_records = 0
     
-    # Calculate page info
-    current_page = (start // length) + 1
-    total_pages = (total_records + length - 1) // length if total_records > 0 else 1
+    # Randomly select display_count numbers from the fetched batch
+    if len(numbers) > display_count:
+        numbers = random.sample(numbers, display_count)
     
     # Format message (escape range_id for HTML)
     range_id_escaped = escape_html(range_id)
     message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n"
-    message += f"<i>Page {current_page}/{total_pages} ({len(numbers)} numbers)</i>\n\n"
+    message += f"<i>Showing {len(numbers)} random numbers from {total_records} total</i>\n\n"
     
     if not numbers:
         message += "No SMS numbers found in this range."
@@ -412,48 +410,19 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
                 # [7]: Stats (HTML)
                 
                 phone_number = number[3] if len(number) > 3 else "N/A"
-                title = strip_html_tags(number[1]) if len(number) > 1 else ""
-                price = strip_html_tags(number[4]) if len(number) > 4 else ""
-                stats = strip_html_tags(number[7]) if len(number) > 7 else ""
                 
                 # Escape for HTML display
                 phone_number = escape_html(phone_number)
-                title = escape_html(title)
-                price = escape_html(price)
-                stats = escape_html(stats)
                 
-                # Format: Phone number (main display)
-                message += f"{start + i}. <code>{phone_number}</code>"
-                
-                # Add price if available
-                if price:
-                    message += f" • {price}"
-                
-                # Add stats if available
-                if stats:
-                    message += f" • {stats}"
-                
-                message += "\n"
+                # Format: Only phone number in code block for click-to-copy
+                message += f"{i}. <code>{phone_number}</code>\n"
             else:
                 # Fallback for any other structure
                 number_str = escape_html(str(number))
-                message += f"{start + i}. {number_str}\n"
+                message += f"{i}. <code>{number_str}</code>\n"
     
-    # Create navigation keyboard
+    # Create navigation keyboard (no pagination, only back buttons)
     keyboard = []
-    
-    # Pagination buttons
-    nav_buttons = []
-    if start > 0:
-        prev_start = max(0, start - length)
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"view_numbers_{range_id}_{prev_start}"))
-    
-    if start + length < total_records:
-        next_start = start + length
-        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"view_numbers_{range_id}_{next_start}"))
-    
-    if nav_buttons:
-        keyboard.append(nav_buttons)
     
     # Back buttons
     keyboard.append([InlineKeyboardButton("⬅️ Back to Range Details", callback_data=f"sms_range_{range_id}")])
