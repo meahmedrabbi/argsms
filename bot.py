@@ -326,6 +326,11 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
     # Get scrapper session and fetch numbers
     scrapper = get_scrapper_session()
     length = 10  # Numbers per page
+    
+    # Safety check
+    if length <= 0:
+        length = 10
+    
     data = scrapper.get_sms_numbers(range_id, start=start, length=length)
     
     if not data:
