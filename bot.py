@@ -53,6 +53,13 @@ def get_db_session():
     return SessionFactory()
 
 
+def escape_html(text):
+    """Escape HTML special characters for safe display in Telegram messages."""
+    if text is None:
+        return ""
+    return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command."""
     user = update.effective_user
@@ -302,7 +309,7 @@ async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
             # Format key to be more readable
             formatted_key = key.replace('_', ' ').title()
             # Escape HTML special characters in value
-            escaped_value = str(value).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            escaped_value = escape_html(value)
             message += f"<b>{formatted_key}</b>: {escaped_value}\n"
     elif isinstance(range_data, list):
         message += " | ".join(str(x) for x in range_data)
@@ -354,8 +361,9 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
     current_page = (start // length) + 1
     total_pages = (total_records + length - 1) // length if total_records > 0 else 1
     
-    # Format message
-    message = f"📞 <b>SMS Numbers - Range {range_id}</b>\n"
+    # Format message (escape range_id for HTML)
+    range_id_escaped = escape_html(range_id)
+    message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n"
     message += f"<i>Page {current_page}/{total_pages} ({len(numbers)} numbers)</i>\n\n"
     
     if not numbers:
@@ -366,20 +374,32 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id, start
                 # Format list data - typically: [number, status, date, etc.]
                 number_str = number[0] if len(number) > 0 else "N/A"
                 status = number[1] if len(number) > 1 else "N/A"
+                
+                # Escape HTML special characters
+                number_str = escape_html(number_str)
+                status = escape_html(status)
+                
                 message += f"{start + i}. <code>{number_str}</code>"
-                if status:
+                if status and status != "N/A":
                     message += f" - {status}"
                 message += "\n"
             elif isinstance(number, dict):
                 # Format dict data
                 number_str = number.get('number', number.get('phone', 'N/A'))
                 status = number.get('status', '')
+                
+                # Escape HTML special characters
+                number_str = escape_html(number_str)
+                status = escape_html(status)
+                
                 message += f"{start + i}. <code>{number_str}</code>"
                 if status:
                     message += f" - {status}"
                 message += "\n"
             else:
-                message += f"{start + i}. {number}\n"
+                # Escape HTML in plain text as well
+                number_escaped = escape_html(number)
+                message += f"{start + i}. {number_escaped}\n"
     
     # Create navigation keyboard
     keyboard = []
