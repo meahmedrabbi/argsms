@@ -1234,7 +1234,10 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
                 return
             
             # SMS found! Mark as permanent and deduct balance
-            if not held_number.is_permanent:
+            was_temporary = not held_number.is_permanent
+            price = 0.0
+            
+            if was_temporary:
                 # Get price for this range
                 price = get_price_for_range(db, held_number.range_id)
                 
@@ -1259,7 +1262,7 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             message_text += f"Found {len(actual_messages)} message(s)\n"
             
             # Show balance deduction info if it was just deducted
-            if not held_number.is_permanent:
+            if was_temporary:
                 message_text += f"\n💸 Balance deducted: ${price:.2f}\n"
                 message_text += f"💰 New balance: ${user.balance:.2f}\n"
             
@@ -1393,7 +1396,10 @@ async def retry_sms_callback(query, context, db, db_user):
             return
         
         # SMS found! Mark as permanent and deduct balance
-        if not held_number.is_permanent:
+        was_temporary = not held_number.is_permanent
+        price = 0.0
+        
+        if was_temporary:
             # Get price for this range
             price = get_price_for_range(db, held_number.range_id)
             
@@ -1418,7 +1424,7 @@ async def retry_sms_callback(query, context, db, db_user):
         message_text += f"Found {len(actual_messages)} message(s)\n"
         
         # Show balance deduction info if it was just deducted
-        if not held_number.is_permanent:
+        if was_temporary:
             message_text += f"\n💸 Balance deducted: ${price:.2f}\n"
             message_text += f"💰 New balance: ${db_user.balance:.2f}\n"
         
