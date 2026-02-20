@@ -24,7 +24,22 @@ from database import (
     get_or_create_user,
     log_access,
     is_user_admin,
-    User
+    is_user_banned,
+    get_user_balance,
+    add_user_balance,
+    deduct_user_balance,
+    get_price_for_range,
+    create_number_holds,
+    mark_number_permanent,
+    get_held_numbers,
+    is_number_held,
+    cleanup_expired_holds,
+    update_first_retry_time,
+    User,
+    NumberHold,
+    PriceRange,
+    Transaction,
+    RechargeRequest
 )
 from scrapper_wrapper import get_scrapper_session
 
@@ -42,6 +57,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN must be set in .env file")
+
+# Get force join channel ID
+FORCE_JOIN_CHANNEL_ID = os.getenv("FORCE_JOIN_CHANNEL_ID", "")
 
 # Constants for button text formatting
 MAX_BUTTON_TEXT_LENGTH = 60
@@ -95,6 +113,59 @@ def strip_html_tags(html_str):
     return text.strip()
 
 
+async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Check if user is a member of the required channel.
+    Returns True if user is a member or no channel is configured, False otherwise.
+    If False, sends a message to the user with a join button.
+    """
+    # If no channel is configured, skip check
+    if not FORCE_JOIN_CHANNEL_ID:
+        return True
+    
+    user_id = update.effective_user.id
+    
+    try:
+        # Check if user is a member of the channel
+        member = await context.bot.get_chat_member(FORCE_JOIN_CHANNEL_ID, user_id)
+        
+        # Check if user has left or is kicked
+        if member.status in ['left', 'kicked']:
+            # User is not a member, send join prompt
+            keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_JOIN_CHANNEL_ID.lstrip('@')}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            message_text = (
+                "🔒 <b>Channel Membership Required</b>\n\n"
+                "To use this bot, you must join our channel first.\n"
+                "Click the button below to join, then try again."
+            )
+            
+            # Send or edit message depending on context
+            if update.callback_query:
+                await update.callback_query.answer("❌ Please join our channel first", show_alert=True)
+                await update.callback_query.edit_message_text(
+                    message_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    message_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            return False
+        
+        # User is a member (status: creator, administrator, member, restricted)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error checking channel membership: {e}")
+        # On error, allow access (fail open)
+        return True
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command."""
     user = update.effective_user
@@ -103,11 +174,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Get or create user in database
         db_user = get_or_create_user(db, user.id, user.username)
+        
+        # Check if user is banned
+        if db_user.is_banned:
+            await update.message.reply_text(
+                "🚫 You have been banned from using this bot.\n"
+                "Please contact an administrator if you believe this is an error."
+            )
+            return
+        
+        # Check channel membership
+        if not await check_channel_membership(update, context):
+            return
+        
         log_access(db, db_user, "start_command")
         
         # Create main menu
         keyboard = [
             [InlineKeyboardButton("📱 View SMS Ranges", callback_data="view_sms_ranges")],
+            [InlineKeyboardButton("👤 My Profile", callback_data="user_profile")],
+            [InlineKeyboardButton("💰 Recharge Balance", callback_data="recharge_request")],
             [InlineKeyboardButton("ℹ️ About", callback_data="about")]
         ]
         
@@ -115,6 +201,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         welcome_message = (
             f"👋 Welcome to ARGSMS Bot, {user.first_name}!\n\n"
+            f"💰 Balance: ${db_user.balance:.2f}\n\n"
             "This bot allows you to view available SMS ranges.\n"
             "Use the menu below to navigate:"
         )
@@ -142,6 +229,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("👥 List Users", callback_data="admin_list_users")],
             [InlineKeyboardButton("🔑 Manage Admins", callback_data="admin_manage_admins")],
+            [InlineKeyboardButton("🚫 Ban/Unban Users", callback_data="admin_manage_bans")],
+            [InlineKeyboardButton("💰 Manage Balance", callback_data="admin_manage_balance")],
+            [InlineKeyboardButton("💳 Recharge Requests", callback_data="admin_recharge_requests")],
+            [InlineKeyboardButton("💵 Set Price Ranges", callback_data="admin_price_ranges")],
             [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
             [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
         ]
@@ -171,11 +262,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get or create user
         db_user = get_or_create_user(db, user.id, user.username)
         
+        # Check if user is banned (except for back_to_main)
         callback_data = query.data
+        if callback_data != "back_to_main" and db_user.is_banned:
+            await query.answer("🚫 You have been banned from using this bot.", show_alert=True)
+            return
+        
+        # Check channel membership for non-admin actions
+        if not callback_data.startswith("admin_") and callback_data != "back_to_main":
+            if not await check_channel_membership(update, context):
+                return
         
         # Main menu callbacks
         if callback_data == "view_sms_ranges":
             await view_sms_ranges_callback(query, context, db, db_user)
+        elif callback_data == "user_profile":
+            await user_profile_callback(query, context, db, db_user)
+        elif callback_data == "recharge_request":
+            await recharge_request_callback(query, context, db, db_user)
         elif callback_data == "about":
             await about_callback(query, context, db, db_user)
         elif callback_data == "back_to_main":
@@ -186,6 +290,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_list_users_callback(query, context, db, db_user)
         elif callback_data == "admin_manage_admins":
             await admin_manage_admins_callback(query, context, db, db_user)
+        elif callback_data == "admin_manage_bans":
+            await admin_manage_bans_callback(query, context, db, db_user)
+        elif callback_data == "admin_manage_balance":
+            await admin_manage_balance_callback(query, context, db, db_user)
+        elif callback_data == "admin_recharge_requests":
+            await admin_recharge_requests_callback(query, context, db, db_user)
+        elif callback_data == "admin_price_ranges":
+            await admin_price_ranges_callback(query, context, db, db_user)
         elif callback_data == "admin_view_stats":
             await admin_view_stats_callback(query, context, db, db_user)
         elif callback_data == "admin_back":
@@ -215,6 +327,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif callback_data.startswith("remove_admin_"):
             user_id = int(callback_data.split("_")[2])
             await remove_admin_callback(query, context, db, db_user, user_id)
+        
+        # Ban user callback
+        elif callback_data.startswith("ban_user_"):
+            user_id = int(callback_data.split("_")[2])
+            await ban_user_callback(query, context, db, db_user, user_id)
+        
+        # Unban user callback
+        elif callback_data.startswith("unban_user_"):
+            user_id = int(callback_data.split("_")[2])
+            await unban_user_callback(query, context, db, db_user, user_id)
+        
+        # Add balance callback
+        elif callback_data.startswith("add_balance_"):
+            user_id = int(callback_data.split("_")[2])
+            await add_balance_prompt_callback(query, context, db, db_user, user_id)
+        
+        # Deduct balance callback
+        elif callback_data.startswith("deduct_balance_"):
+            user_id = int(callback_data.split("_")[2])
+            await deduct_balance_prompt_callback(query, context, db, db_user, user_id)
+        
+        # Approve recharge callback
+        elif callback_data.startswith("approve_recharge_"):
+            request_id = int(callback_data.split("_")[2])
+            await approve_recharge_callback(query, context, db, db_user, request_id)
+        
+        # Reject recharge callback
+        elif callback_data.startswith("reject_recharge_"):
+            request_id = int(callback_data.split("_")[2])
+            await reject_recharge_callback(query, context, db, db_user, request_id)
         
         # Retry SMS search callback
         elif callback_data.startswith("retry_sms_"):
@@ -367,6 +509,26 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
     """Show SMS numbers for a specific range."""
     log_access(db, db_user, f"view_sms_numbers_{range_id}")
     
+    # Clean up expired holds
+    cleanup_expired_holds(db)
+    
+    # Get price for this range
+    price = get_price_for_range(db, range_id)
+    
+    # Check if user has sufficient balance
+    if db_user.balance < price:
+        await query.edit_message_text(
+            f"❌ Insufficient balance!\n\n"
+            f"💰 Your Balance: ${db_user.balance:.2f}\n"
+            f"💵 Required: ${price:.2f}\n\n"
+            "Please recharge your balance to continue.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💰 Recharge", callback_data="recharge_request"),
+                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+            ]])
+        )
+        return
+    
     # Get scrapper session and fetch numbers
     scrapper = get_scrapper_session()
     
@@ -395,41 +557,51 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
         except (ValueError, TypeError):
             total_records = 0
     
-    # Randomly select SMS_DISPLAY_COUNT numbers from the fetched batch
-    if len(numbers) >= SMS_DISPLAY_COUNT:
-        numbers = random.sample(numbers, SMS_DISPLAY_COUNT)
+    # Filter out numbers that are already held
+    available_numbers = []
+    for number in numbers:
+        if isinstance(number, list) and len(number) >= 4:
+            phone_number = number[3] if len(number) > 3 else None
+            if phone_number and not is_number_held(db, phone_number):
+                available_numbers.append(number)
+    
+    # Check if we have enough available numbers
+    if len(available_numbers) < SMS_DISPLAY_COUNT:
+        await query.edit_message_text(
+            f"❌ Not enough available numbers in this range!\n\n"
+            f"Available: {len(available_numbers)} numbers\n"
+            f"Required: {SMS_DISPLAY_COUNT} numbers\n\n"
+            "Please try another range or try again later.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+            ]])
+        )
+        return
+    
+    # Randomly select SMS_DISPLAY_COUNT numbers from available
+    selected_numbers = random.sample(available_numbers, SMS_DISPLAY_COUNT)
+    
+    # Extract phone numbers for holding
+    phone_numbers = []
+    for number in selected_numbers:
+        if isinstance(number, list) and len(number) >= 4:
+            phone_number = number[3] if len(number) > 3 else "N/A"
+            phone_numbers.append(phone_number)
+    
+    # Create holds for selected numbers
+    create_number_holds(db, db_user, phone_numbers, range_id)
     
     # Format message (escape range_id for HTML)
     range_id_escaped = escape_html(range_id)
     message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n\n"
+    message += f"💵 Price per SMS: ${price:.2f}\n"
+    message += f"💰 Your Balance: ${db_user.balance:.2f}\n\n"
+    message += f"🔒 These {len(phone_numbers)} numbers are now held for you.\n"
+    message += "They will be released after 5 minutes from your first retry.\n\n"
     
-    if not numbers:
-        message += "No SMS numbers found in this range."
-    else:
-        # Collect all phone numbers in a list
-        phone_numbers = []
-        for number in numbers:
-            if isinstance(number, list) and len(number) >= 4:
-                # DataTables response structure (8 columns):
-                # [0]: Checkbox HTML
-                # [1]: Title/Description
-                # [2]: Empty
-                # [3]: Phone Number ← This is what we need!
-                # [4]: Price/Rate (HTML)
-                # [5]: Action buttons (HTML)
-                # [6]: Empty
-                # [7]: Stats (HTML)
-                
-                phone_number = number[3] if len(number) > 3 else "N/A"
-                phone_numbers.append(phone_number)
-            else:
-                # Fallback for any other structure
-                phone_numbers.append(str(number))
-        
-        # Format all numbers in a single code block
-        # This allows copying all numbers at once
-        numbers_text = '\n'.join([f'{phone}' for phone in phone_numbers])
-        message += f"<pre>{numbers_text}</pre>"
+    # Format all numbers in a single code block
+    numbers_text = '\n'.join([f'{phone}' for phone in phone_numbers])
+    message += f"<pre>{numbers_text}</pre>"
     
     # Create navigation keyboard (no pagination, only back buttons)
     keyboard = []
@@ -466,6 +638,8 @@ async def back_to_main_callback(query, context, db, db_user):
     """Return to main menu."""
     keyboard = [
         [InlineKeyboardButton("📱 View SMS Ranges", callback_data="view_sms_ranges")],
+        [InlineKeyboardButton("👤 My Profile", callback_data="user_profile")],
+        [InlineKeyboardButton("💰 Recharge Balance", callback_data="recharge_request")],
         [InlineKeyboardButton("ℹ️ About", callback_data="about")]
     ]
     
@@ -473,6 +647,7 @@ async def back_to_main_callback(query, context, db, db_user):
     
     welcome_message = (
         f"👋 Welcome to ARGSMS Bot!\n\n"
+        f"💰 Balance: ${db_user.balance:.2f}\n\n"
         "This bot allows you to view available SMS ranges.\n"
         "Use the menu below to navigate:"
     )
@@ -494,9 +669,10 @@ async def admin_list_users_callback(query, context, db, db_user):
     message = "👥 User List (Last 20)\n\n"
     for user in users:
         admin_badge = "🔑" if user.is_admin else "👤"
+        ban_badge = "🚫" if user.is_banned else ""
         username_str = f"@{user.username}" if user.username else "N/A"
-        message += f"{admin_badge} ID: {user.telegram_id} | {username_str}\n"
-        message += f"   Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
+        message += f"{admin_badge}{ban_badge} ID: {user.telegram_id} | {username_str}\n"
+        message += f"   Balance: ${user.balance:.2f} | Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
     
     keyboard = [
         [InlineKeyboardButton("🔑 Manage Admins", callback_data="admin_manage_admins")],
@@ -549,11 +725,20 @@ async def admin_view_stats_callback(query, context, db, db_user):
     log_access(db, db_user, "admin_view_stats")
     
     # Get statistics
+    from sqlalchemy import func
+    
     total_users = db.query(User).count()
     admin_users = db.query(User).filter_by(is_admin=True).count()
+    banned_users = db.query(User).filter_by(is_banned=True).count()
     
-    from sqlalchemy import func
-    from database import AccessLog
+    # Calculate total balance in system
+    total_balance = db.query(func.sum(User.balance)).scalar() or 0.0
+    total_spent = db.query(func.sum(User.total_spent)).scalar() or 0.0
+    total_sms = db.query(func.sum(User.total_sms_received)).scalar() or 0
+    
+    # Number holds stats
+    total_holds = db.query(NumberHold).count()
+    permanent_holds = db.query(NumberHold).filter_by(is_permanent=True).count()
     
     today = datetime.utcnow().date()
     today_logs = db.query(AccessLog).filter(
@@ -564,6 +749,12 @@ async def admin_view_stats_callback(query, context, db, db_user):
         "📊 Bot Statistics\n\n"
         f"👥 Total Users: {total_users}\n"
         f"🔑 Admin Users: {admin_users}\n"
+        f"🚫 Banned Users: {banned_users}\n\n"
+        f"💰 Total Balance in System: ${total_balance:.2f}\n"
+        f"💸 Total Spent: ${total_spent:.2f}\n"
+        f"📨 Total SMS Received: {total_sms}\n\n"
+        f"🔒 Number Holds: {total_holds}\n"
+        f"🔐 Permanent Holds: {permanent_holds}\n\n"
         f"📈 Today's Actions: {today_logs}\n"
     )
     
@@ -628,6 +819,10 @@ async def admin_back_callback(query, context, db, db_user):
     keyboard = [
         [InlineKeyboardButton("👥 List Users", callback_data="admin_list_users")],
         [InlineKeyboardButton("🔑 Manage Admins", callback_data="admin_manage_admins")],
+        [InlineKeyboardButton("🚫 Ban/Unban Users", callback_data="admin_manage_bans")],
+        [InlineKeyboardButton("💰 Manage Balance", callback_data="admin_manage_balance")],
+        [InlineKeyboardButton("💳 Recharge Requests", callback_data="admin_recharge_requests")],
+        [InlineKeyboardButton("💵 Set Price Ranges", callback_data="admin_price_ranges")],
         [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
         [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
     ]
@@ -640,6 +835,255 @@ async def admin_back_callback(query, context, db, db_user):
     )
     
     await query.edit_message_text(admin_message, reply_markup=reply_markup)
+
+
+async def user_profile_callback(query, context, db, db_user):
+    """Show user profile with stats."""
+    log_access(db, db_user, "view_profile")
+    
+    # Get user's held numbers count
+    held_numbers = db.query(NumberHold).filter_by(user_id=db_user.id).count()
+    permanent_holds = db.query(NumberHold).filter_by(user_id=db_user.id, is_permanent=True).count()
+    
+    message = (
+        "👤 <b>Your Profile</b>\n\n"
+        f"🆔 <b>User ID:</b> <code>{db_user.telegram_id}</code>\n"
+        f"👤 <b>Username:</b> @{db_user.username if db_user.username else 'N/A'}\n"
+        f"💰 <b>Balance:</b> ${db_user.balance:.2f}\n"
+        f"💸 <b>Total Spent:</b> ${db_user.total_spent:.2f}\n"
+        f"📨 <b>Total SMS Received:</b> {db_user.total_sms_received}\n"
+        f"🔒 <b>Numbers Held:</b> {held_numbers} ({permanent_holds} permanent)\n"
+        f"📅 <b>Joined:</b> {db_user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def recharge_request_callback(query, context, db, db_user):
+    """Handle recharge request from user."""
+    log_access(db, db_user, "recharge_request")
+    
+    message = (
+        "💰 <b>Recharge Balance</b>\n\n"
+        "To recharge your balance, please contact an administrator.\n\n"
+        "📞 Send a message to the admin with:\n"
+        "• Your User ID\n"
+        "• Amount you want to recharge\n"
+        "• Payment proof (if required)\n\n"
+        f"Your User ID: <code>{db_user.telegram_id}</code>\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def admin_manage_bans_callback(query, context, db, db_user):
+    """Manage banned users (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_manage_bans")
+    
+    # Get all users
+    users = db.query(User).order_by(User.created_at.desc()).limit(10).all()
+    
+    message = "🚫 Ban/Unban Users\n\n"
+    message += "Select a user to toggle ban status:\n\n"
+    
+    keyboard = []
+    for user in users:
+        ban_badge = "🚫" if user.is_banned else "✅"
+        username_str = f"@{user.username}" if user.username else f"ID:{user.telegram_id}"
+        button_text = f"{ban_badge} {username_str}"
+        
+        if user.is_banned:
+            callback = f"unban_user_{user.id}"
+        else:
+            callback = f"ban_user_{user.id}"
+        
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback)])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup)
+
+
+async def ban_user_callback(query, context, db, db_user, target_user_id):
+    """Ban a user (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    target_user = db.query(User).filter_by(id=target_user_id).first()
+    if target_user:
+        # Don't allow banning admins
+        if target_user.is_admin:
+            await query.answer("❌ Cannot ban an admin user", show_alert=True)
+            return
+        
+        target_user.is_banned = True
+        db.commit()
+        log_access(db, db_user, f"ban_user_{target_user.telegram_id}")
+        await query.answer(f"✅ User {target_user.telegram_id} has been banned")
+    else:
+        await query.answer("❌ User not found")
+    
+    # Refresh the manage bans view
+    await admin_manage_bans_callback(query, context, db, db_user)
+
+
+async def unban_user_callback(query, context, db, db_user, target_user_id):
+    """Unban a user (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    target_user = db.query(User).filter_by(id=target_user_id).first()
+    if target_user:
+        target_user.is_banned = False
+        db.commit()
+        log_access(db, db_user, f"unban_user_{target_user.telegram_id}")
+        await query.answer(f"✅ User {target_user.telegram_id} has been unbanned")
+    else:
+        await query.answer("❌ User not found")
+    
+    # Refresh the manage bans view
+    await admin_manage_bans_callback(query, context, db, db_user)
+
+
+async def admin_manage_balance_callback(query, context, db, db_user):
+    """Manage user balances (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_manage_balance")
+    
+    # Get all users
+    users = db.query(User).order_by(User.created_at.desc()).limit(10).all()
+    
+    message = "💰 Manage User Balance\n\n"
+    message += "Select a user to manage their balance:\n\n"
+    
+    for user in users:
+        username_str = f"@{user.username}" if user.username else f"ID:{user.telegram_id}"
+        message += f"👤 {username_str} - Balance: ${user.balance:.2f}\n"
+    
+    message += "\n💡 Tip: Use /addbalance <user_id> <amount> or /deductbalance <user_id> <amount> commands"
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup)
+
+
+async def add_balance_prompt_callback(query, context, db, db_user, target_user_id):
+    """Prompt for balance addition (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # This is a placeholder - actual implementation requires message handler
+    await query.answer("💡 Use /addbalance <user_id> <amount> command", show_alert=True)
+
+
+async def deduct_balance_prompt_callback(query, context, db, db_user, target_user_id):
+    """Prompt for balance deduction (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # This is a placeholder - actual implementation requires message handler
+    await query.answer("💡 Use /deductbalance <user_id> <amount> command", show_alert=True)
+
+
+async def admin_recharge_requests_callback(query, context, db, db_user):
+    """View and manage recharge requests (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_recharge_requests")
+    
+    # Get pending recharge requests
+    pending_requests = db.query(RechargeRequest).filter_by(status='pending').order_by(RechargeRequest.created_at.desc()).limit(10).all()
+    
+    message = "💳 <b>Recharge Requests</b>\n\n"
+    
+    if not pending_requests:
+        message += "No pending recharge requests.\n"
+        keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
+    else:
+        message += f"Pending requests: {len(pending_requests)}\n\n"
+        
+        keyboard = []
+        for req in pending_requests:
+            req_user = db.query(User).filter_by(id=req.user_id).first()
+            username_str = f"@{req_user.username}" if req_user.username else f"ID:{req_user.telegram_id}"
+            button_text = f"{username_str} - ${req.amount:.2f}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_recharge_{req.id}")])
+        
+        message += "💡 Tip: Use /approverecharge <request_id> or /rejectrecharge <request_id> commands"
+        keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def approve_recharge_callback(query, context, db, db_user, request_id):
+    """Approve a recharge request (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # This is handled via command
+    await query.answer("💡 Use /approverecharge <request_id> command", show_alert=True)
+
+
+async def reject_recharge_callback(query, context, db, db_user, request_id):
+    """Reject a recharge request (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # This is handled via command
+    await query.answer("💡 Use /rejectrecharge <request_id> command", show_alert=True)
+
+
+async def admin_price_ranges_callback(query, context, db, db_user):
+    """Manage price ranges (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_price_ranges")
+    
+    # Get all price ranges
+    price_ranges = db.query(PriceRange).order_by(PriceRange.created_at.desc()).limit(10).all()
+    
+    message = "💵 <b>SMS Price Ranges</b>\n\n"
+    
+    if not price_ranges:
+        message += "No price ranges configured.\n\n"
+    else:
+        for pr in price_ranges:
+            message += f"📍 Pattern: <code>{pr.range_pattern}</code>\n"
+            message += f"   Price: ${pr.price:.2f}\n\n"
+    
+    message += "💡 Use /setprice <pattern> <price> to set a price range\n"
+    message += "Example: /setprice russia 2.5"
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
 def is_phone_number(text):
@@ -693,13 +1137,43 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
     phone_number = re.sub(r'[^\d+]', '', text)
     
     # Get database session
-    with get_db_session() as db:
+    db = get_db_session()
+    try:
         # Get or create user
         user = get_or_create_user(
             db,
             telegram_id=message.from_user.id,
             username=message.from_user.username or message.from_user.first_name
         )
+        
+        # Check if user is banned
+        if user.is_banned:
+            await message.reply_text(
+                "🚫 You have been banned from using this bot.\n"
+                "Please contact an administrator if you believe this is an error."
+            )
+            return
+        
+        # Check channel membership
+        if not await check_channel_membership(update, context):
+            return
+        
+        # Check if this number is held by the user
+        held_number = db.query(NumberHold).filter_by(
+            user_id=user.id,
+            phone_number=phone_number
+        ).first()
+        
+        if not held_number:
+            await message.reply_text(
+                "❌ This number is not held by you.\n"
+                "Please request numbers from a range first."
+            )
+            return
+        
+        # Update first retry time if not set
+        if not held_number.first_retry_time:
+            update_first_retry_time(db, user, phone_number)
         
         # Log the search
         log_access(db, user, f"SMS search: {phone_number}")
@@ -754,20 +1228,37 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
                 return
             
-            # Format messages
-            # Response structure based on API:
-            # [0]: Time (e.g., "2026-02-20 15:51:22")
-            # [1]: Range/Title (e.g., "Russia Megafon Lion 79 14 Nov 25")
-            # [2]: Phone Number
-            # [3]: Sender ID (e.g., "Facebook", "Instagram")
-            # [4]: null or other
-            # [5]: SMS Body (e.g., "593990 is your Instagram code Dont share it #ig")
-            # [6]: Currency symbol
-            # [7]: Price
-            # [8]: Other
+            # SMS found! Mark as permanent and deduct balance
+            if not held_number.is_permanent:
+                # Get price for this range
+                price = get_price_for_range(db, held_number.range_id)
+                
+                # Deduct balance
+                new_balance = deduct_user_balance(
+                    db, user, price, 
+                    transaction_type='sms_charge',
+                    description=f"SMS received on {phone_number}"
+                )
+                
+                if new_balance is None:
+                    await searching_msg.edit_text(
+                        "❌ Insufficient balance to complete this transaction."
+                    )
+                    return
+                
+                # Mark as permanent hold
+                mark_number_permanent(db, user, phone_number)
             
+            # Format messages
             message_text = f"📱 <b>SMS Messages for {escape_html(phone_number)}</b>\n"
-            message_text += f"Found {len(actual_messages)} message(s)\n\n"
+            message_text += f"Found {len(actual_messages)} message(s)\n"
+            
+            # Show balance deduction info if it was just deducted
+            if not held_number.is_permanent:
+                message_text += f"\n💸 Balance deducted: ${price:.2f}\n"
+                message_text += f"💰 New balance: ${user.balance:.2f}\n"
+            
+            message_text += "\n"
             
             for i, msg_data in enumerate(actual_messages, 1):
                 time = msg_data[0] if len(msg_data) > 0 else "N/A"
@@ -810,12 +1301,28 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             await searching_msg.edit_text(
                 "❌ An error occurred while searching for SMS messages. Please try again later."
             )
+    finally:
+        db.close()
 
 
 async def retry_sms_callback(query, context, db, db_user):
     """Handle retry button for SMS search."""
     # Extract phone number from callback data (format: retry_sms_PHONENUMBER)
     phone_number = query.data.replace("retry_sms_", "")
+    
+    # Check if this number is held by the user
+    held_number = db.query(NumberHold).filter_by(
+        user_id=db_user.id,
+        phone_number=phone_number
+    ).first()
+    
+    if not held_number:
+        await query.answer("❌ This number is not held by you.", show_alert=True)
+        return
+    
+    # Update first retry time if not set
+    if not held_number.first_retry_time:
+        update_first_retry_time(db, db_user, phone_number)
     
     # Log the retry
     log_access(db, db_user, f"SMS search retry: {phone_number}")
@@ -880,9 +1387,37 @@ async def retry_sms_callback(query, context, db, db_user):
             )
             return
         
+        # SMS found! Mark as permanent and deduct balance
+        if not held_number.is_permanent:
+            # Get price for this range
+            price = get_price_for_range(db, held_number.range_id)
+            
+            # Deduct balance
+            new_balance = deduct_user_balance(
+                db, db_user, price, 
+                transaction_type='sms_charge',
+                description=f"SMS received on {phone_number}"
+            )
+            
+            if new_balance is None:
+                await query.edit_message_text(
+                    "❌ Insufficient balance to complete this transaction."
+                )
+                return
+            
+            # Mark as permanent hold
+            mark_number_permanent(db, db_user, phone_number)
+        
         # Format messages
         message_text = f"📱 <b>SMS Messages for {escape_html(phone_number)}</b>\n"
-        message_text += f"Found {len(actual_messages)} message(s)\n\n"
+        message_text += f"Found {len(actual_messages)} message(s)\n"
+        
+        # Show balance deduction info if it was just deducted
+        if not held_number.is_permanent:
+            message_text += f"\n💸 Balance deducted: ${price:.2f}\n"
+            message_text += f"💰 New balance: ${db_user.balance:.2f}\n"
+        
+        message_text += "\n"
         
         for i, msg_data in enumerate(actual_messages, 1):
             time = msg_data[0] if len(msg_data) > 0 else "N/A"
@@ -938,6 +1473,185 @@ async def retry_sms_callback(query, context, db, db_user):
         )
 
 
+async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /addbalance command (admin only)."""
+    user = update.effective_user
+    db = get_db_session()
+    
+    try:
+        # Check if user is admin
+        if not is_user_admin(db, user.id):
+            await update.message.reply_text("❌ You don't have admin privileges.")
+            return
+        
+        # Parse command arguments
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: /addbalance <user_id> <amount>\n"
+                "Example: /addbalance 123456789 10.50"
+            )
+            return
+        
+        try:
+            target_telegram_id = int(context.args[0])
+            amount = float(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID or amount.")
+            return
+        
+        if amount <= 0:
+            await update.message.reply_text("❌ Amount must be positive.")
+            return
+        
+        # Find target user
+        target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+        if not target_user:
+            await update.message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
+            return
+        
+        # Add balance
+        admin_user = get_or_create_user(db, user.id, user.username)
+        new_balance = add_user_balance(
+            db, target_user, amount, 
+            transaction_type='admin_add',
+            description=f"Admin added by {user.id}"
+        )
+        
+        log_access(db, admin_user, f"add_balance_{target_telegram_id}_{amount}")
+        
+        await update.message.reply_text(
+            f"✅ Successfully added ${amount:.2f} to user {target_telegram_id}\n"
+            f"New balance: ${new_balance:.2f}"
+        )
+    finally:
+        db.close()
+
+
+async def deductbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /deductbalance command (admin only)."""
+    user = update.effective_user
+    db = get_db_session()
+    
+    try:
+        # Check if user is admin
+        if not is_user_admin(db, user.id):
+            await update.message.reply_text("❌ You don't have admin privileges.")
+            return
+        
+        # Parse command arguments
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: /deductbalance <user_id> <amount>\n"
+                "Example: /deductbalance 123456789 5.50"
+            )
+            return
+        
+        try:
+            target_telegram_id = int(context.args[0])
+            amount = float(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID or amount.")
+            return
+        
+        if amount <= 0:
+            await update.message.reply_text("❌ Amount must be positive.")
+            return
+        
+        # Find target user
+        target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+        if not target_user:
+            await update.message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
+            return
+        
+        # Check if user has sufficient balance
+        if target_user.balance < amount:
+            await update.message.reply_text(
+                f"❌ User has insufficient balance.\n"
+                f"Current balance: ${target_user.balance:.2f}\n"
+                f"Requested deduction: ${amount:.2f}"
+            )
+            return
+        
+        # Deduct balance
+        admin_user = get_or_create_user(db, user.id, user.username)
+        new_balance = deduct_user_balance(
+            db, target_user, amount, 
+            transaction_type='admin_deduct',
+            description=f"Admin deducted by {user.id}"
+        )
+        
+        log_access(db, admin_user, f"deduct_balance_{target_telegram_id}_{amount}")
+        
+        await update.message.reply_text(
+            f"✅ Successfully deducted ${amount:.2f} from user {target_telegram_id}\n"
+            f"New balance: ${new_balance:.2f}"
+        )
+    finally:
+        db.close()
+
+
+async def setprice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /setprice command (admin only)."""
+    user = update.effective_user
+    db = get_db_session()
+    
+    try:
+        # Check if user is admin
+        if not is_user_admin(db, user.id):
+            await update.message.reply_text("❌ You don't have admin privileges.")
+            return
+        
+        # Parse command arguments
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: /setprice <pattern> <price>\n"
+                "Example: /setprice russia 2.5"
+            )
+            return
+        
+        pattern = context.args[0].lower()
+        try:
+            price = float(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid price.")
+            return
+        
+        if price < 0:
+            await update.message.reply_text("❌ Price must be non-negative.")
+            return
+        
+        # Check if pattern already exists
+        existing = db.query(PriceRange).filter_by(range_pattern=pattern).first()
+        
+        admin_user = get_or_create_user(db, user.id, user.username)
+        
+        if existing:
+            # Update existing price
+            existing.price = price
+            db.commit()
+            action = "updated"
+        else:
+            # Create new price range
+            price_range = PriceRange(
+                range_pattern=pattern,
+                price=price,
+                created_by=admin_user.id
+            )
+            db.add(price_range)
+            db.commit()
+            action = "created"
+        
+        log_access(db, admin_user, f"set_price_{pattern}_{price}")
+        
+        await update.message.reply_text(
+            f"✅ Price range {action} successfully!\n"
+            f"Pattern: {pattern}\n"
+            f"Price: ${price:.2f}"
+        )
+    finally:
+        db.close()
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors in a clean and informative way."""
     # Extract useful information from update
@@ -981,6 +1695,9 @@ def main():
     # Register command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("addbalance", addbalance_command))
+    application.add_handler(CommandHandler("deductbalance", deductbalance_command))
+    application.add_handler(CommandHandler("setprice", setprice_command))
     
     # Register message handler for phone number search
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_search))
