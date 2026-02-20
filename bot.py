@@ -50,6 +50,9 @@ MAX_TITLE_LENGTH = 50
 SMS_FETCH_COUNT = 100  # How many numbers to fetch from API
 SMS_DISPLAY_COUNT = 20  # How many random numbers to display
 
+# Constants for SMS message display
+MAX_TELEGRAM_MESSAGE_LENGTH = 3500  # Leave room for additional text
+
 # Initialize database session factory
 SessionFactory = init_db()
 
@@ -634,9 +637,6 @@ async def admin_back_callback(query, context, db, db_user):
     await query.edit_message_text(admin_message, reply_markup=reply_markup)
 
 
-    await query.edit_message_text(admin_message, reply_markup=reply_markup)
-
-
 def is_phone_number(text):
     """Check if the text is a valid phone number."""
     # Remove any whitespace or special characters
@@ -646,6 +646,30 @@ def is_phone_number(text):
     # Pattern: optional +, then 10-15 digits
     pattern = r'^\+?\d{10,15}$'
     return bool(re.match(pattern, cleaned))
+
+
+def is_stats_row(row):
+    """
+    Check if a row from the SMS messages API is a statistics row rather than an actual message.
+    
+    Stats rows typically have comma-separated values with percentages in the first field,
+    e.g., "0.01,0,0,0,0,0,0.01,0,0,100%,NAN%,NAN%,1"
+    
+    Args:
+        row: A list representing a row from the aaData array
+        
+    Returns:
+        True if the row is a stats row, False if it's an actual SMS message
+    """
+    if not isinstance(row, list) or len(row) < 1:
+        return False
+    
+    first_field = row[0]
+    if not isinstance(first_field, str):
+        return False
+    
+    # Stats rows have comma-separated values with percentage signs
+    return ',' in first_field and '%' in first_field
 
 
 async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -701,13 +725,11 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             messages = data.get('aaData', [])
             
-            # Filter out the stats row (last row is usually stats)
-            # Stats row has unusual structure with comma-separated values
+            # Filter out the stats row using helper function
             actual_messages = []
             for msg in messages:
                 if isinstance(msg, list) and len(msg) >= 6:
-                    # Check if it's not the stats row
-                    if not (isinstance(msg[0], str) and ',' in msg[0] and '%' in msg[0]):
+                    if not is_stats_row(msg):
                         actual_messages.append(msg)
             
             if not actual_messages:
@@ -754,7 +776,7 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
                 message_text += f"💬 <b>Message:</b>\n<pre>{body_escaped}</pre>\n\n"
                 
                 # Telegram has a message length limit, so split if needed
-                if len(message_text) > 3500:  # Leave room for more messages indicator
+                if len(message_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
                     message_text += f"<i>... and {len(actual_messages) - i} more message(s)</i>"
                     break
             
