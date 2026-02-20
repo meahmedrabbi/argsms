@@ -357,9 +357,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id = int(callback_data.split("_")[3])
             await deduct_balance_prompt_callback(query, context, db, db_user, user_id)
         
-        # Set price callback - ask for pattern
-        elif callback_data == "add_price_range":
-            await add_price_range_prompt_callback(query, context, db, db_user)
+        # Set price for specific range callback
+        elif callback_data.startswith("set_price_for_range_"):
+            range_id = callback_data[len("set_price_for_range_"):]
+            await set_price_for_range_callback(query, context, db, db_user, range_id)
+        
+        # Select range for price setting
+        elif callback_data == "select_range_for_price":
+            await select_range_for_price_callback(query, context, db, db_user)
+        
+        # Add balance by user ID
+        elif callback_data == "add_balance_by_id":
+            await add_balance_by_id_prompt_callback(query, context, db, db_user)
+        
+        # Deduct balance by user ID
+        elif callback_data == "deduct_balance_by_id":
+            await deduct_balance_by_id_prompt_callback(query, context, db, db_user)
         
         # Approve recharge callback
         elif callback_data.startswith("approve_recharge_"):
@@ -998,6 +1011,9 @@ async def admin_manage_balance_callback(query, context, db, db_user):
             InlineKeyboardButton(f"➖", callback_data=f"select_deduct_balance_{user.id}")
         ])
     
+    # Add options to manage by user ID
+    keyboard.append([InlineKeyboardButton("🆔 Add Balance by User ID", callback_data="add_balance_by_id")])
+    keyboard.append([InlineKeyboardButton("🆔 Deduct Balance by User ID", callback_data="deduct_balance_by_id")])
     keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -1134,13 +1150,13 @@ async def admin_price_ranges_callback(query, context, db, db_user):
         message += "No price ranges configured.\n\n"
     else:
         for pr in price_ranges:
-            message += f"📍 Pattern: <code>{pr.range_pattern}</code>\n"
+            message += f"📍 Range: <code>{pr.range_pattern}</code>\n"
             message += f"   Price: ${pr.price:.2f}\n\n"
     
-    message += "Click below to add a new price range:"
+    message += "Select an option below:"
     
     keyboard = [
-        [InlineKeyboardButton("➕ Add Price Range", callback_data="add_price_range")],
+        [InlineKeyboardButton("📋 Select from Available Ranges", callback_data="select_range_for_price")],
         [InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1148,22 +1164,161 @@ async def admin_price_ranges_callback(query, context, db, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
-async def add_price_range_prompt_callback(query, context, db, db_user):
-    """Prompt admin to add a price range."""
+async def add_balance_by_id_prompt_callback(query, context, db, db_user):
+    """Prompt admin to add balance by entering user ID."""
     if not is_user_admin(db, db_user.telegram_id):
         await query.answer("❌ Admin access required", show_alert=True)
         return
     
-    # Set state for pattern input
-    context.user_data['admin_action'] = 'set_price_pattern'
+    context.user_data['admin_action'] = 'add_balance_by_id_step1'
     
     message = (
-        "💵 <b>Add Price Range</b>\n\n"
-        "Please send the range pattern (e.g., russia, usa, megafon).\n"
-        "This pattern will match range names (case-insensitive)."
+        "💰 <b>Add Balance by User ID</b>\n\n"
+        "Please send the Telegram User ID (e.g., 123456789):"
     )
     
-    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_price_ranges")]]
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def deduct_balance_by_id_prompt_callback(query, context, db, db_user):
+    """Prompt admin to deduct balance by entering user ID."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    context.user_data['admin_action'] = 'deduct_balance_by_id_step1'
+    
+    message = (
+        "💰 <b>Deduct Balance by User ID</b>\n\n"
+        "Please send the Telegram User ID (e.g., 123456789):"
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def select_range_for_price_callback(query, context, db, db_user):
+    """Show available SMS ranges for price setting (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "select_range_for_price")
+    
+    # Get scrapper session and fetch ranges
+    scrapper = get_scrapper_session()
+    data = scrapper.get_sms_ranges(max_results=20, page=1)
+    
+    if not data:
+        await query.edit_message_text(
+            "❌ Failed to retrieve SMS ranges. Please try again later.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Back", callback_data="admin_price_ranges")
+            ]])
+        )
+        return
+    
+    # Parse ranges
+    ranges = []
+    if isinstance(data, dict):
+        if 'results' in data:
+            ranges = data['results']
+        elif 'data' in data:
+            ranges = data['data']
+        elif 'aaData' in data:
+            ranges = data['aaData']
+        else:
+            ranges = [data]
+    elif isinstance(data, list):
+        ranges = data
+    
+    message = "💵 <b>Select Range to Set Price</b>\n\n"
+    message += f"Available SMS Ranges ({len(ranges)}):\n"
+    message += "Click on a range to set its price.\n\n"
+    
+    # Create keyboard with range buttons
+    keyboard = []
+    
+    for i, item in enumerate(ranges, 1):
+        button_text = ""
+        range_id = None
+        
+        if isinstance(item, dict):
+            range_id = item.get('id') or item.get('range_id') or str(i)
+            title = item.get('title', '')
+            
+            if title:
+                button_text = f"{title[:MAX_TITLE_LENGTH]}" if len(title) > MAX_TITLE_LENGTH else title
+            else:
+                info = " - ".join(f"{k}: {v}" for k, v in list(item.items())[:2])
+                button_text = info[:MAX_BUTTON_TEXT_LENGTH]
+        elif isinstance(item, list):
+            range_id = str(i)
+            info = " | ".join(str(x) for x in item[:2])
+            button_text = info[:MAX_BUTTON_TEXT_LENGTH]
+        else:
+            range_id = str(i)
+            button_text = str(item)[:MAX_BUTTON_TEXT_LENGTH]
+        
+        # Store range data for later
+        if 'price_ranges_data' not in context.chat_data:
+            context.chat_data['price_ranges_data'] = {}
+        context.chat_data['price_ranges_data'][str(range_id)] = item
+        
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"set_price_for_range_{range_id}")])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_price_ranges")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def set_price_for_range_callback(query, context, db, db_user, range_id):
+    """Prompt admin to set price for a specific range."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    # Get range data
+    range_data = None
+    if 'price_ranges_data' in context.chat_data:
+        range_data = context.chat_data['price_ranges_data'].get(str(range_id))
+    
+    # Extract range title/name
+    range_name = range_id
+    if range_data:
+        if isinstance(range_data, dict):
+            range_name = range_data.get('title', range_data.get('name', range_id))
+        elif isinstance(range_data, list) and len(range_data) > 0:
+            range_name = str(range_data[0])
+    
+    # Check if price already exists for this range
+    existing = db.query(PriceRange).filter_by(range_pattern=range_id).first()
+    current_price = existing.price if existing else None
+    
+    # Store range ID for later
+    context.user_data['admin_action'] = 'set_price_for_specific_range'
+    context.user_data['selected_range_id'] = range_id
+    context.user_data['selected_range_name'] = range_name
+    
+    message = (
+        f"💵 <b>Set Price for Range</b>\n\n"
+        f"Range: <code>{escape_html(str(range_name))}</code>\n"
+    )
+    
+    if current_price is not None:
+        message += f"Current Price: ${current_price:.2f}\n\n"
+    else:
+        message += "Current Price: Not set\n\n"
+    
+    message += "Please send the new price (e.g., 2.5 or 10):"
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="select_range_for_price")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
@@ -1615,7 +1770,147 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Check if there's a pending admin action
         admin_action = context.user_data.get('admin_action')
         
-        if admin_action == 'add_balance':
+        if admin_action == 'add_balance_by_id_step1':
+            # Parse user ID
+            try:
+                target_telegram_id = int(text)
+                
+                # Find user
+                target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+                if not target_user:
+                    await message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Ask for amount
+                context.user_data['admin_action'] = 'add_balance_by_id_step2'
+                context.user_data['target_telegram_id'] = target_telegram_id
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"💰 <b>Add Balance to {username_str}</b>\n\n"
+                    f"Current balance: ${target_user.balance:.2f}\n\n"
+                    "Please send the amount to add (e.g., 100 or 50.5):",
+                    parse_mode='HTML'
+                )
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid user ID. Please send a valid number:")
+                return
+        
+        elif admin_action == 'add_balance_by_id_step2':
+            # Parse amount
+            try:
+                amount = float(text)
+                if amount <= 0:
+                    await message.reply_text("❌ Amount must be positive. Please try again:")
+                    return
+                
+                target_telegram_id = context.user_data.get('target_telegram_id')
+                target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+                
+                if not target_user:
+                    await message.reply_text("❌ User not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Add balance
+                new_balance = add_user_balance(
+                    db, target_user, amount,
+                    transaction_type='admin_add',
+                    description=f"Admin added by {user.telegram_id}"
+                )
+                
+                log_access(db, user, f"add_balance_{target_telegram_id}_{amount}")
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"✅ Successfully added ${amount:.2f} to {username_str}\n"
+                    f"New balance: ${new_balance:.2f}"
+                )
+                
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid amount. Please send a valid number (e.g., 100 or 50.5):")
+                return
+        
+        elif admin_action == 'deduct_balance_by_id_step1':
+            # Parse user ID
+            try:
+                target_telegram_id = int(text)
+                
+                # Find user
+                target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+                if not target_user:
+                    await message.reply_text(f"❌ User with ID {target_telegram_id} not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Ask for amount
+                context.user_data['admin_action'] = 'deduct_balance_by_id_step2'
+                context.user_data['target_telegram_id'] = target_telegram_id
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"💰 <b>Deduct Balance from {username_str}</b>\n\n"
+                    f"Current balance: ${target_user.balance:.2f}\n\n"
+                    "Please send the amount to deduct (e.g., 10 or 5.5):",
+                    parse_mode='HTML'
+                )
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid user ID. Please send a valid number:")
+                return
+        
+        elif admin_action == 'deduct_balance_by_id_step2':
+            # Parse amount
+            try:
+                amount = float(text)
+                if amount <= 0:
+                    await message.reply_text("❌ Amount must be positive. Please try again:")
+                    return
+                
+                target_telegram_id = context.user_data.get('target_telegram_id')
+                target_user = db.query(User).filter_by(telegram_id=target_telegram_id).first()
+                
+                if not target_user:
+                    await message.reply_text("❌ User not found.")
+                    context.user_data.clear()
+                    return
+                
+                # Check sufficient balance
+                if target_user.balance < amount:
+                    await message.reply_text(
+                        f"❌ User has insufficient balance.\n"
+                        f"Current balance: ${target_user.balance:.2f}\n"
+                        f"Requested deduction: ${amount:.2f}"
+                    )
+                    context.user_data.clear()
+                    return
+                
+                # Deduct balance
+                new_balance = deduct_user_balance(
+                    db, target_user, amount,
+                    transaction_type='admin_deduct',
+                    description=f"Admin deducted by {user.telegram_id}"
+                )
+                
+                log_access(db, user, f"deduct_balance_{target_telegram_id}_{amount}")
+                
+                username_str = f"@{target_user.username}" if target_user.username else f"ID:{target_user.telegram_id}"
+                await message.reply_text(
+                    f"✅ Successfully deducted ${amount:.2f} from {username_str}\n"
+                    f"New balance: ${new_balance:.2f}"
+                )
+                
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid amount. Please send a valid number (e.g., 10 or 5.5):")
+                return
+        
+        elif admin_action == 'add_balance':
             # Parse amount
             try:
                 amount = float(text)
@@ -1699,6 +1994,51 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 
             except ValueError:
                 await message.reply_text("❌ Invalid amount. Please send a valid number (e.g., 10 or 5.5):")
+                return
+        
+        elif admin_action == 'set_price_for_specific_range':
+            # Parse price for a specific range
+            try:
+                price = float(text)
+                if price <= 0:
+                    await message.reply_text("❌ Price must be positive. Please try again:")
+                    return
+                
+                range_id = context.user_data.get('selected_range_id')
+                range_name = context.user_data.get('selected_range_name', range_id)
+                
+                # Check if price already exists
+                existing = db.query(PriceRange).filter_by(range_pattern=range_id).first()
+                
+                if existing:
+                    # Update existing
+                    existing.price = price
+                    db.commit()
+                    action = "updated"
+                else:
+                    # Create new
+                    price_range = PriceRange(
+                        range_pattern=range_id,
+                        price=price,
+                        created_by=user.id
+                    )
+                    db.add(price_range)
+                    db.commit()
+                    action = "created"
+                
+                log_access(db, user, f"set_price_{range_id}_{price}")
+                
+                await message.reply_text(
+                    f"✅ Price {action} successfully!\n"
+                    f"Range: <code>{escape_html(str(range_name))}</code>\n"
+                    f"Price: ${price:.2f}",
+                    parse_mode='HTML'
+                )
+                
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid price. Please send a valid number (e.g., 2.5 or 10):")
                 return
         
         elif admin_action == 'set_price_pattern':
