@@ -420,6 +420,30 @@ python scrapper.py --action sms-ranges --json
 python scrapper.py --action sms-ranges --page 2 --max-results 50
 ```
 
+## Troubleshooting
+
+If you encounter issues with the bot, refer to the [TROUBLESHOOTING.md](TROUBLESHOOTING.md) guide for:
+
+- **"Failed to retrieve SMS ranges"** error diagnosis and solutions
+- Authentication and API connectivity issues
+- Database migration problems
+- Service startup issues
+- Debug mode setup
+- Log analysis
+
+Quick diagnosis commands:
+```bash
+# View bot logs
+sudo journalctl -u argsms-bot -n 100
+
+# Test API connection
+python3 scrapper.py --action sms-ranges --max-results 5
+
+# Enable debug mode
+echo "DEBUG_MODE=true" >> .env
+sudo systemctl restart argsms-bot
+```
+
 ## Security Notes
 
 - The `.env` file contains sensitive credentials and should never be committed to version control
