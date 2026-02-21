@@ -55,6 +55,7 @@ from database import (
     delete_range_and_numbers,
     set_range_price
 )
+from scrapper_wrapper import get_scrapper_session
 
 # Load environment variables
 load_dotenv()
