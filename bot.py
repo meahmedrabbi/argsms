@@ -642,6 +642,8 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_unique_id
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
 async def about_callback(query, context, db, db_user):
     """Show about information."""
     log_access(db, db_user, "about")
