@@ -6,7 +6,8 @@ import logging
 import random
 import re
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
+from io import BytesIO
 from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -19,6 +20,9 @@ from telegram.ext import (
     filters,
     ConversationHandler
 )
+
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
 
 from database import (
     init_db,
@@ -317,6 +321,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_price_ranges_callback(query, context, db, db_user)
         elif callback_data == "admin_view_stats":
             await admin_view_stats_callback(query, context, db, db_user)
+        elif callback_data == "admin_number_holds":
+            await admin_number_holds_callback(query, context, db, db_user)
+        elif callback_data == "admin_export_holds":
+            await admin_export_holds_callback(query, context, db, db_user)
+        elif callback_data == "admin_cleanup_holds":
+            await admin_cleanup_holds_callback(query, context, db, db_user)
         elif callback_data == "admin_back":
             await admin_back_callback(query, context, db, db_user)
         
@@ -809,6 +819,228 @@ async def admin_view_stats_callback(query, context, db, db_user):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
+async def admin_number_holds_callback(query, context, db, db_user):
+    """Show number holds analysis (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_number_holds")
+    
+    # Get statistics
+    from sqlalchemy import func, Integer
+    
+    # Total holds
+    total_holds = db.query(NumberHold).count()
+    permanent_holds = db.query(NumberHold).filter_by(is_permanent=True).count()
+    temporary_holds = total_holds - permanent_holds
+    
+    # Get holds by user
+    holds_by_user = db.query(
+        User.telegram_id,
+        User.username,
+        func.count(NumberHold.id).label('hold_count'),
+        func.sum(func.cast(NumberHold.is_permanent, Integer)).label('permanent_count')
+    ).join(NumberHold).group_by(User.id).order_by(func.count(NumberHold.id).desc()).limit(10).all()
+    
+    # Get holds by range
+    holds_by_range = db.query(
+        NumberHold.range_id,
+        func.count(NumberHold.id).label('hold_count')
+    ).group_by(NumberHold.range_id).order_by(func.count(NumberHold.id).desc()).limit(10).all()
+    
+    # Check for expired temporary holds
+    now = datetime.utcnow()
+    expired_holds = db.query(NumberHold).filter(
+        NumberHold.is_permanent == False,
+        NumberHold.first_retry_time.isnot(None),
+        NumberHold.first_retry_time < now - timedelta(minutes=5)
+    ).count()
+    
+    message = (
+        "🔒 <b>Number Holds Analysis</b>\n\n"
+        f"📊 <b>Overview:</b>\n"
+        f"Total Holds: {total_holds}\n"
+        f"├─ Permanent: {permanent_holds}\n"
+        f"├─ Temporary: {temporary_holds}\n"
+        f"└─ Expired (ready to release): {expired_holds}\n\n"
+    )
+    
+    if holds_by_user:
+        message += "👥 <b>Top Users by Holds:</b>\n"
+        for telegram_id, username, count, perm_count in holds_by_user:
+            username_str = f"@{username}" if username else f"ID:{telegram_id}"
+            message += f"• {username_str}: {count} holds ({perm_count or 0} permanent)\n"
+        message += "\n"
+    
+    if holds_by_range:
+        message += "📱 <b>Top Ranges by Holds:</b>\n"
+        for range_id, count in holds_by_range[:5]:
+            message += f"• {range_id}: {count} numbers\n"
+        message += "\n"
+    
+    message += "💡 Click 'Export Report' to download detailed Excel report"
+    
+    keyboard = [
+        [InlineKeyboardButton("📥 Export Report", callback_data="admin_export_holds")],
+        [InlineKeyboardButton("🔄 Cleanup Expired Holds", callback_data="admin_cleanup_holds")],
+        [InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def admin_export_holds_callback(query, context, db, db_user):
+    """Export number holds report as Excel file (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    await query.answer("⏳ Generating report...", show_alert=False)
+    log_access(db, db_user, "admin_export_holds")
+    
+    # Get all holds with user information
+    holds = db.query(NumberHold, User).join(User).order_by(NumberHold.hold_start_time.desc()).all()
+    
+    # Create Excel workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Number Holds Report"
+    
+    # Define headers
+    headers = [
+        "User ID", "Username", "Phone Number", "Range ID",
+        "Hold Type", "Hold Start", "First Retry", "Status", "Time Info"
+    ]
+    
+    # Style for header row
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    # Write headers
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    
+    # Write data
+    now = datetime.utcnow()
+    for row_idx, (hold, user) in enumerate(holds, start=2):
+        # Calculate status and time info
+        if hold.is_permanent:
+            status = "Permanent"
+            time_info = "N/A"
+        elif hold.first_retry_time:
+            expire_time = hold.first_retry_time + timedelta(minutes=5)
+            if now > expire_time:
+                status = "Expired"
+                time_info = f"Expired {int((now - expire_time).total_seconds() / 60)} min ago"
+            else:
+                status = "Active"
+                remaining = int((expire_time - now).total_seconds() / 60)
+                time_info = f"{remaining} min remaining"
+        else:
+            status = "Active"
+            time_info = "Not yet retried"
+        
+        # Write row data
+        ws.cell(row=row_idx, column=1, value=user.telegram_id)
+        ws.cell(row=row_idx, column=2, value=user.username or "N/A")
+        ws.cell(row=row_idx, column=3, value=hold.phone_number)
+        ws.cell(row=row_idx, column=4, value=hold.range_id)
+        ws.cell(row=row_idx, column=5, value="Permanent" if hold.is_permanent else "Temporary")
+        ws.cell(row=row_idx, column=6, value=hold.hold_start_time.strftime('%Y-%m-%d %H:%M:%S'))
+        ws.cell(row=row_idx, column=7, value=hold.first_retry_time.strftime('%Y-%m-%d %H:%M:%S') if hold.first_retry_time else "N/A")
+        ws.cell(row=row_idx, column=8, value=status)
+        ws.cell(row=row_idx, column=9, value=time_info)
+    
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column].width = adjusted_width
+    
+    # Add summary sheet
+    summary_ws = wb.create_sheet("Summary")
+    summary_ws['A1'] = "Number Holds Summary"
+    summary_ws['A1'].font = Font(bold=True, size=14)
+    
+    total_holds = len(holds)
+    permanent_count = sum(1 for hold, _ in holds if hold.is_permanent)
+    temporary_count = total_holds - permanent_count
+    
+    expired_count = 0
+    active_temp_count = 0
+    for hold, _ in holds:
+        if not hold.is_permanent:
+            if hold.first_retry_time:
+                expire_time = hold.first_retry_time + timedelta(minutes=5)
+                if now > expire_time:
+                    expired_count += 1
+                else:
+                    active_temp_count += 1
+    
+    summary_data = [
+        ("Total Holds", total_holds),
+        ("Permanent Holds", permanent_count),
+        ("Temporary Holds", temporary_count),
+        ("Active Temporary", active_temp_count),
+        ("Expired (Ready to Release)", expired_count),
+        ("Report Generated", now.strftime('%Y-%m-%d %H:%M:%S UTC'))
+    ]
+    
+    for idx, (label, value) in enumerate(summary_data, start=3):
+        summary_ws.cell(row=idx, column=1, value=label).font = Font(bold=True)
+        summary_ws.cell(row=idx, column=2, value=value)
+    
+    summary_ws.column_dimensions['A'].width = 30
+    summary_ws.column_dimensions['B'].width = 30
+    
+    # Save to BytesIO
+    excel_file = BytesIO()
+    wb.save(excel_file)
+    excel_file.seek(0)
+    
+    # Send file to admin
+    filename = f"number_holds_report_{now.strftime('%Y%m%d_%H%M%S')}.xlsx"
+    
+    await context.bot.send_document(
+        chat_id=query.message.chat_id,
+        document=excel_file,
+        filename=filename,
+        caption=f"📊 Number Holds Report\n\nTotal Records: {total_holds}\nGenerated: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    )
+    
+    # Return to number holds view
+    await admin_number_holds_callback(query, context, db, db_user)
+
+
+async def admin_cleanup_holds_callback(query, context, db, db_user):
+    """Manually cleanup expired holds (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_cleanup_holds")
+    
+    # Cleanup expired holds
+    cleaned = cleanup_expired_holds(db)
+    
+    await query.answer(f"✅ Cleaned up {cleaned} expired holds", show_alert=True)
+    
+    # Refresh the number holds view
+    await admin_number_holds_callback(query, context, db, db_user)
+
+
 async def make_admin_callback(query, context, db, db_user, target_user_id):
     """Make a user admin (admin only)."""
     if not is_user_admin(db, db_user.telegram_id):
@@ -869,6 +1101,7 @@ async def admin_back_callback(query, context, db, db_user):
         [InlineKeyboardButton("💳 Recharge Requests", callback_data="admin_recharge_requests")],
         [InlineKeyboardButton("💵 Set Price Ranges", callback_data="admin_price_ranges")],
         [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
+        [InlineKeyboardButton("🔒 Number Holds Report", callback_data="admin_number_holds")],
         [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
     ]
     
