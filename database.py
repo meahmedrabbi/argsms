@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text, or_, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from dotenv import load_dotenv
@@ -439,14 +439,14 @@ def cleanup_expired_holds(db_session):
     expired_holds = db_session.query(NumberHold).filter(
         NumberHold.is_permanent.is_(False)
     ).filter(
-        db.or_(
+        or_(
             # Case 1: first_retry_time is set and expired
-            db.and_(
+            and_(
                 NumberHold.first_retry_time.isnot(None),
                 NumberHold.first_retry_time < five_minutes_ago
             ),
             # Case 2: first_retry_time is None and hold is old
-            db.and_(
+            and_(
                 NumberHold.first_retry_time.is_(None),
                 NumberHold.hold_start_time < ten_minutes_ago
             )
