@@ -627,16 +627,17 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_unique_id
     message += f"💰 Your Balance: ${db_user.balance:.2f}\n\n"
     message += f"📞 <b>Your {SMS_DISPLAY_COUNT} Numbers:</b>\n\n"
     
+    message += "<blockquote>"
     for i, phone_num in enumerate(selected_numbers, 1):
         message += f"{i}. <code>{phone_num.number}</code>\n"
+    message += "</blockquote>"
     
     message += "\n⏰ <b>Numbers are temporarily held for you.</b>\n"
-    message += "They will be released after 5 minutes of first search.\n\n"
-    message += "Use the buttons below to check for SMS:"
+    message += "Each number will be released 5 minutes after you first search it.\n\n"
+    message += "Send any number from the list above as a message to search for SMS."
     
-    # Create keyboard with check buttons
+    # Create keyboard with action buttons
     keyboard = [
-        [InlineKeyboardButton("🔍 Check for SMS", callback_data=f"check_sms_{range_unique_id}")],
         [InlineKeyboardButton("🔄 Get New Numbers", callback_data=f"view_numbers_{range_unique_id}")],
         [InlineKeyboardButton("⬅️ Back to Range", callback_data=f"range_{range_unique_id}")]
     ]

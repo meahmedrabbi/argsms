@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text, or_, and_
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from dotenv import load_dotenv
@@ -424,33 +424,21 @@ def cleanup_expired_holds(db_session):
     """Remove holds that have expired.
     
     Expiration rules:
-    - If first_retry_time is set: 5 minutes after first_retry_time
-    - If first_retry_time is None: 10 minutes after hold_start_time
+    - Each number is released individually 5 minutes after the user first
+      searched/retried it (first_retry_time is set).
+    - Numbers that were never searched are NOT released automatically.
     """
     from datetime import datetime, timedelta
     
     now = datetime.utcnow()
     five_minutes_ago = now - timedelta(minutes=5)
-    ten_minutes_ago = now - timedelta(minutes=10)
     
-    # Delete non-permanent holds where:
-    # 1. first_retry_time is set and more than 5 minutes ago, OR
-    # 2. first_retry_time is None and hold_start_time is more than 10 minutes ago
+    # Delete non-permanent holds where the user has searched the number
+    # (first_retry_time is set) and 5 minutes have passed since that search
     expired_holds = db_session.query(NumberHold).filter(
-        NumberHold.is_permanent.is_(False)
-    ).filter(
-        or_(
-            # Case 1: first_retry_time is set and expired
-            and_(
-                NumberHold.first_retry_time.isnot(None),
-                NumberHold.first_retry_time < five_minutes_ago
-            ),
-            # Case 2: first_retry_time is None and hold is old
-            and_(
-                NumberHold.first_retry_time.is_(None),
-                NumberHold.hold_start_time < ten_minutes_ago
-            )
-        )
+        NumberHold.is_permanent.is_(False),
+        NumberHold.first_retry_time.isnot(None),
+        NumberHold.first_retry_time < five_minutes_ago
     )
     
     count = expired_holds.delete()
