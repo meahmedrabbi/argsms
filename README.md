@@ -142,12 +142,21 @@ The bot will:
 
 For production deployments, you can run the bot as a systemd service that automatically starts on boot and restarts on failure.
 
+**Prerequisites:**
+- Virtual environment is recommended. The installer will detect and use it automatically.
+  ```bash
+  python3 -m venv venv
+  source venv/bin/activate
+  pip install -r requirements.txt
+  ```
+
 **Installation:**
 ```bash
 sudo ./install-service.sh
 ```
 
 The installation script will:
+- Detect and use virtual environment (venv) if present
 - Prompt for the bot installation directory
 - Prompt for the user to run the service as
 - Create and install the systemd service

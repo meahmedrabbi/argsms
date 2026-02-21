@@ -6,8 +6,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/argsms
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/bin/python3 /root/argsms/bot.py
+Environment="PATH=/root/argsms/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/root/argsms/venv/bin/python /root/argsms/bot.py
 Restart=always
 RestartSec=10
 

@@ -19,6 +19,20 @@ Running the bot as a systemd service provides several benefits:
 - Root or sudo access
 - Bot already installed and configured with `.env` file
 - Python 3 and all dependencies installed
+- **Virtual environment (venv) recommended** - The installation script will detect and use venv if present
+
+### Setting Up Virtual Environment (Recommended)
+
+Before installing the service, create and activate a virtual environment:
+
+```bash
+cd /path/to/argsms
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+The installation script will automatically detect the venv and configure the service to use it.
 
 ## Quick Installation
 
@@ -194,6 +208,47 @@ sudo journalctl -u argsms-bot -n 50
    - **Python not found**: Verify Python path in service file
    - **Module not found**: Ensure all dependencies are installed for the service user
    - **.env file missing**: Verify `.env` file exists in WorkingDirectory
+   - **Virtual environment not used**: Service must use venv Python if dependencies are in venv
+
+### Module Not Found / Import Errors
+
+If you see errors like "ModuleNotFoundError" or "No module named 'X'":
+
+**Cause**: The service is using system Python but dependencies are installed in a virtual environment.
+
+**Solution**: Reinstall the service to use the virtual environment:
+
+```bash
+# Stop and remove the service
+sudo ./uninstall-service.sh
+
+# Verify virtual environment exists and has dependencies
+ls -la venv/bin/python
+source venv/bin/activate
+pip list | grep telegram  # Verify dependencies are installed
+
+# Reinstall the service (it will detect the venv)
+sudo ./install-service.sh
+
+# Start the service
+sudo systemctl start argsms-bot
+```
+
+Alternatively, manually edit the service file to use venv Python:
+
+```bash
+sudo nano /etc/systemd/system/argsms-bot.service
+
+# Change ExecStart line to:
+ExecStart=/path/to/argsms/venv/bin/python /path/to/argsms/bot.py
+
+# Change Environment PATH to include venv:
+Environment="PATH=/path/to/argsms/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Reload and restart
+sudo systemctl daemon-reload
+sudo systemctl restart argsms-bot
+```
 
 ### Logs Not Showing
 

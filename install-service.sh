@@ -68,11 +68,49 @@ if [ -z "$PYTHON_PATH" ]; then
     exit 1
 fi
 
+# Check for virtual environment
+VENV_PYTHON=""
+if [ -f "$INSTALL_DIR/venv/bin/python" ]; then
+    VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
+    echo -e "${GREEN}✓ Found virtual environment at $INSTALL_DIR/venv${NC}"
+elif [ -f "$INSTALL_DIR/venv/bin/python3" ]; then
+    VENV_PYTHON="$INSTALL_DIR/venv/bin/python3"
+    echo -e "${GREEN}✓ Found virtual environment at $INSTALL_DIR/venv${NC}"
+else
+    echo -e "${YELLOW}⚠ Warning: No virtual environment found at $INSTALL_DIR/venv${NC}"
+    echo "The service will use system Python, which may fail if dependencies are installed in a venv."
+    echo ""
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        echo ""
+        echo "To create a virtual environment:"
+        echo "  cd $INSTALL_DIR"
+        echo "  python3 -m venv venv"
+        echo "  source venv/bin/activate"
+        echo "  pip install -r requirements.txt"
+        exit 0
+    fi
+fi
+
+# Use venv Python if available, otherwise system Python
+FINAL_PYTHON="${VENV_PYTHON:-$PYTHON_PATH}"
+VENV_PATH_PREFIX=""
+if [ -n "$VENV_PYTHON" ]; then
+    VENV_PATH_PREFIX="$INSTALL_DIR/venv/bin:"
+fi
+
 echo ""
 echo -e "${GREEN}Configuration Summary:${NC}"
 echo "  Installation Directory: $INSTALL_DIR"
 echo "  Bot User: $BOT_USER"
-echo "  Python Path: $PYTHON_PATH"
+echo "  Python Path: $FINAL_PYTHON"
+if [ -n "$VENV_PYTHON" ]; then
+    echo "  Virtual Environment: Yes ($INSTALL_DIR/venv)"
+else
+    echo "  Virtual Environment: No (using system Python)"
+fi
 echo "  Service File: $SERVICE_FILE"
 echo ""
 
@@ -88,7 +126,8 @@ TEMP_SERVICE="/tmp/argsms-bot.service.tmp"
 cat "$SERVICE_FILE" | \
     sed "s|User=.*|User=$BOT_USER|" | \
     sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|" | \
-    sed "s|ExecStart=.*|ExecStart=$PYTHON_PATH $INSTALL_DIR/bot.py|" \
+    sed "s|Environment=\"PATH=.*|Environment=\"PATH=${VENV_PATH_PREFIX}/usr/local/bin:/usr/bin:/bin\"|" | \
+    sed "s|ExecStart=.*|ExecStart=$FINAL_PYTHON $INSTALL_DIR/bot.py|" \
     > "$TEMP_SERVICE"
 
 # Copy service file to systemd directory
