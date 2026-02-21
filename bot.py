@@ -426,6 +426,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             request_id = int(callback_data.split("_")[2])
             await reject_recharge_callback(query, context, db, db_user, request_id)
         
+        # Check SMS callback (when user clicks "Check for SMS" button)
+        elif callback_data.startswith("check_sms_"):
+            range_unique_id = callback_data[len("check_sms_"):]
+            await check_sms_callback(query, context, db, db_user, range_unique_id)
+        
+        # Search SMS for specific number callback
+        elif callback_data.startswith("search_sms_"):
+            phone_number = callback_data[len("search_sms_"):]
+            await search_sms_callback(query, context, db, db_user, phone_number)
+        
         # Retry SMS search callback
         elif callback_data.startswith("retry_sms_"):
             await retry_sms_callback(query, context, db, db_user)
@@ -1825,6 +1835,223 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
     finally:
         db.close()
+
+
+async def check_sms_callback(query, context, db, db_user, range_unique_id):
+    """Handle 'Check for SMS' button click - show list of held numbers to check."""
+    log_access(db, db_user, f"check_sms_{range_unique_id}")
+    
+    # Get the numbers stored in context for this range
+    if 'selected_numbers' not in context.user_data or range_unique_id not in context.user_data['selected_numbers']:
+        await query.edit_message_text(
+            "❌ No numbers found. Please request numbers again.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
+            ]])
+        )
+        return
+    
+    numbers = context.user_data['selected_numbers'][range_unique_id]
+    
+    # Create message with all numbers and instructions
+    message = f"📱 <b>Check SMS for Numbers</b>\n\n"
+    message += f"Your {len(numbers)} held numbers:\n\n"
+    
+    for i, phone_number in enumerate(numbers, 1):
+        message += f"{i}. <code>{phone_number}</code>\n"
+    
+    message += "\n💡 <b>How to check:</b>\n"
+    message += "Simply send any phone number from the list above as a message, and I'll search for SMS!\n\n"
+    message += "Or click a button below to search for a specific number:"
+    
+    # Create keyboard with buttons for each number (max 20)
+    keyboard = []
+    for phone_number in numbers[:20]:  # Limit to 20 buttons
+        keyboard.append([InlineKeyboardButton(
+            f"🔍 {phone_number}", 
+            callback_data=f"search_sms_{phone_number}"
+        )])
+    
+    # Add navigation buttons
+    keyboard.append([
+        InlineKeyboardButton("🔄 Get New Numbers", callback_data=f"view_numbers_{range_unique_id}"),
+        InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
+    ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message,
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+
+async def search_sms_callback(query, context, db, db_user, phone_number):
+    """Search for SMS messages for a specific phone number (from button click)."""
+    # Check if this number is held by the user
+    held_number = db.query(NumberHold).filter_by(
+        user_id=db_user.id,
+        phone_number_str=phone_number
+    ).first()
+    
+    if not held_number:
+        await query.answer("❌ This number is not held by you.", show_alert=True)
+        return
+    
+    # Update first retry time if not set
+    if not held_number.first_retry_time:
+        update_first_retry_time(db, db_user, phone_number)
+    
+    # Log the search
+    log_access(db, db_user, f"SMS search: {phone_number}")
+    
+    # Show searching message
+    await query.edit_message_text(
+        f"🔍 Searching SMS messages for <code>{escape_html(phone_number)}</code>...",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Get scrapper session
+        scrapper = get_scrapper_session()
+        
+        # Search for SMS messages
+        data = scrapper.get_sms_messages(phone_number)
+        
+        if not data:
+            # Create keyboard with retry button
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                    InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                "❌ Failed to retrieve SMS messages. Please try again.",
+                reply_markup=reply_markup
+            )
+            return
+        
+        # Parse response
+        total_records = data.get('iTotalRecords', '0')
+        if isinstance(total_records, str):
+            total_records = int(total_records) if total_records.isdigit() else 0
+        
+        messages = data.get('aaData', [])
+        
+        # Filter out the stats row
+        actual_messages = []
+        for msg in messages:
+            if isinstance(msg, list) and len(msg) >= 6:
+                if not is_stats_row(msg):
+                    actual_messages.append(msg)
+        
+        if not actual_messages:
+            # Create keyboard with retry button
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                    InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"📭 No SMS messages found for <code>{escape_html(phone_number)}</code>",
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            return
+        
+        # SMS found! Mark as permanent and deduct balance
+        was_temporary = not held_number.is_permanent
+        price = 0.0
+        
+        if was_temporary:
+            # Get price for this range
+            price = get_price_for_range(db, held_number.range_id)
+            
+            # Deduct balance
+            new_balance = deduct_user_balance(
+                db, db_user, price, 
+                transaction_type='sms_charge',
+                description=f"SMS received on {phone_number}"
+            )
+            
+            if new_balance is None:
+                await query.edit_message_text(
+                    "❌ Insufficient balance to complete this transaction."
+                )
+                return
+            
+            # Mark as permanent hold
+            mark_number_permanent(db, db_user, phone_number)
+        
+        # Format messages
+        message_text = f"📱 <b>SMS Messages for {escape_html(phone_number)}</b>\n"
+        message_text += f"Found {len(actual_messages)} message(s)\n"
+        
+        # Show balance deduction info if it was just deducted
+        if was_temporary:
+            message_text += f"\n💸 Balance deducted: ${price:.2f}\n"
+            message_text += f"💰 New balance: ${db_user.balance:.2f}\n"
+        
+        message_text += "\n"
+        
+        for i, msg_data in enumerate(actual_messages, 1):
+            time = msg_data[0] if len(msg_data) > 0 else "N/A"
+            sender_id = msg_data[3] if len(msg_data) > 3 else "N/A"
+            sms_body = msg_data[5] if len(msg_data) > 5 else "N/A"
+            
+            # Clean up None values
+            if sender_id is None:
+                sender_id = "Unknown"
+            if sms_body is None:
+                sms_body = "(empty)"
+            
+            # Escape HTML in the content
+            time_escaped = escape_html(str(time))
+            sender_escaped = escape_html(str(sender_id))
+            body_escaped = escape_html(str(sms_body))
+            
+            message_text += f"<b>Message {i}:</b>\n"
+            message_text += f"🕒 <b>Time:</b> {time_escaped}\n"
+            message_text += f"📨 <b>Sender:</b> {sender_escaped}\n"
+            message_text += f"💬 <b>Message:</b>\n<pre>{body_escaped}</pre>\n\n"
+            
+            # Telegram has a message length limit, so split if needed
+            if len(message_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
+                message_text += f"<i>... and {len(actual_messages) - i} more message(s)</i>"
+                break
+        
+        # Create keyboard with back button
+        keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            message_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in SMS search: {e}")
+        # Create keyboard with retry button
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Retry", callback_data=f"retry_sms_{phone_number}"),
+                InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "❌ An error occurred while searching for SMS messages. Please try again.",
+            reply_markup=reply_markup
+        )
 
 
 async def retry_sms_callback(query, context, db, db_user):
