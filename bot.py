@@ -45,9 +45,16 @@ from database import (
     PriceRange,
     Transaction,
     RechargeRequest,
-    AccessLog
+    AccessLog,
+    Range,
+    PhoneNumber,
+    import_csv_data,
+    get_all_ranges,
+    get_range_by_unique_id,
+    get_available_numbers_for_range,
+    delete_range_and_numbers,
+    set_range_price
 )
-from scrapper_wrapper import get_scrapper_session
 
 # Load environment variables
 load_dotenv()
@@ -86,6 +93,7 @@ WAITING_FOR_ADD_BALANCE_AMOUNT = 1
 WAITING_FOR_DEDUCT_BALANCE_AMOUNT = 2
 WAITING_FOR_PRICE_PATTERN = 3
 WAITING_FOR_PRICE_AMOUNT = 4
+WAITING_FOR_CSV_FILE = 5
 
 # Initialize database session factory
 SessionFactory = init_db()
@@ -253,7 +261,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🚫 Ban/Unban Users", callback_data="admin_manage_bans")],
             [InlineKeyboardButton("💰 Manage Balance", callback_data="admin_manage_balance")],
             [InlineKeyboardButton("💳 Recharge Requests", callback_data="admin_recharge_requests")],
-            [InlineKeyboardButton("💵 Set Price Ranges", callback_data="admin_price_ranges")],
+            [InlineKeyboardButton("📤 Upload CSV (Ranges & Numbers)", callback_data="admin_upload_csv")],
+            [InlineKeyboardButton("📋 Manage Ranges & Prices", callback_data="admin_manage_ranges")],
+            [InlineKeyboardButton("🔒 Number Holds Report", callback_data="admin_number_holds")],
             [InlineKeyboardButton("📊 View Stats", callback_data="admin_view_stats")],
             [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")]
         ]
@@ -317,8 +327,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_manage_balance_callback(query, context, db, db_user)
         elif callback_data == "admin_recharge_requests":
             await admin_recharge_requests_callback(query, context, db, db_user)
-        elif callback_data == "admin_price_ranges":
-            await admin_price_ranges_callback(query, context, db, db_user)
+        elif callback_data == "admin_upload_csv":
+            await admin_upload_csv_callback(query, context, db, db_user)
+        elif callback_data == "admin_manage_ranges":
+            await admin_manage_ranges_callback(query, context, db, db_user)
         elif callback_data == "admin_view_stats":
             await admin_view_stats_callback(query, context, db, db_user)
         elif callback_data == "admin_number_holds":
@@ -330,14 +342,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif callback_data == "admin_back":
             await admin_back_callback(query, context, db, db_user)
         
-        # SMS range detail view
-        elif callback_data.startswith("sms_range_"):
-            range_id = callback_data.replace("sms_range_", "")
-            await view_sms_range_detail_callback(query, context, db, db_user, range_id)
+        # Range detail view (updated to use range_ prefix instead of sms_range_)
+        elif callback_data.startswith("range_"):
+            range_unique_id = callback_data.replace("range_", "")
+            await view_sms_range_detail_callback(query, context, db, db_user, range_unique_id)
+        
+        # Set price for a range
+        elif callback_data.startswith("set_price_"):
+            range_unique_id = callback_data.replace("set_price_", "")
+            await admin_set_range_price_callback(query, context, db, db_user, range_unique_id)
+        
+        # Delete a range
+        elif callback_data.startswith("delete_range_"):
+            range_unique_id = callback_data.replace("delete_range_", "")
+            await admin_delete_range_callback(query, context, db, db_user, range_unique_id)
         
         # View SMS numbers for a range
         elif callback_data.startswith("view_numbers_"):
-            range_id = callback_data[len("view_numbers_"):]
+            range_unique_id = callback_data[len("view_numbers_"):]
             await view_sms_numbers_callback(query, context, db, db_user, range_id)
         
         # Pagination callbacks
@@ -410,165 +432,127 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def view_sms_ranges_callback(query, context, db, db_user, page=1):
-    """Show SMS ranges to the user."""
+    """Show SMS ranges to the user from database."""
     log_access(db, db_user, f"view_sms_ranges_page_{page}")
     
-    # Get scrapper session and fetch data
-    scrapper = get_scrapper_session()
-    data = scrapper.get_sms_ranges(max_results=10, page=page)
+    # Get all ranges from database with pagination
+    all_ranges = get_all_ranges(db)
     
-    if not data:
+    if not all_ranges:
         error_msg = (
-            "❌ Failed to retrieve SMS ranges.\n\n"
-            "This could be due to:\n"
-            "• API server is temporarily down\n"
-            "• Network connection issue\n"
-            "• Authentication failure\n\n"
-            "Please try again in a few moments. If the problem persists, contact the administrator."
+            "❌ No SMS ranges available.\n\n"
+            "The administrator needs to upload ranges via CSV file.\n\n"
+            "Please contact the administrator or try again later."
         )
         await query.edit_message_text(error_msg)
-        logger.error(f"Failed to retrieve SMS ranges for user {db_user.telegram_id}")
+        logger.info(f"No SMS ranges in database for user {db_user.telegram_id}")
         return
     
-    # Handle different possible JSON structures
-    ranges = []
-    has_more = False
-    total_items = None
-    
-    if isinstance(data, dict):
-        if 'results' in data:
-            ranges = data['results']
-            has_more = data.get('pagination', {}).get('more', False)
-        elif 'data' in data:
-            ranges = data['data']
-            total_items = data.get('total', None)
-            has_more = page * 10 < total_items if total_items else len(ranges) == 10
-        elif 'aaData' in data:
-            ranges = data['aaData']
-        else:
-            ranges = [data]
-    elif isinstance(data, list):
-        ranges = data
+    # Implement pagination
+    items_per_page = 10
+    total_items = len(all_ranges)
+    total_pages = (total_items + items_per_page - 1) // items_per_page
+    start_idx = (page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    ranges = all_ranges[start_idx:end_idx]
     
     # Create message header with page info
-    page_info = f"Page {page}"
-    if total_items:
-        total_pages = (total_items + 9) // 10  # Round up
-        page_info = f"Page {page}/{total_pages}"
-    
-    message = f"📱 Available SMS Ranges ({page_info})\n\n"
-    
-    if not ranges:
-        message += "No SMS ranges available."
-    else:
-        message += f"Select a range to view details ({len(ranges)} ranges):"
+    page_info = f"Page {page}/{total_pages}" if total_pages > 1 else ""
+    message = f"📱 Available SMS Ranges ({total_items} total)\n"
+    if page_info:
+        message += f"{page_info}\n"
+    message += "\nSelect a range to view details:"
     
     # Create keyboard with one button per range
     keyboard = []
     
-    for i, item in enumerate(ranges, 1):
-        # Format button text based on item structure
-        button_text = ""
-        range_id = None
+    for range_obj, number_count in ranges:
+        # Format button text with range name and number count
+        button_text = f"{range_obj.name} ({number_count} numbers)"
         
-        if isinstance(item, dict):
-            # Extract id and title if available
-            range_id = item.get('id') or item.get('range_id') or str((page-1)*10 + i)
-            title = item.get('title', '')
-            
-            # Create concise button text
-            if title:
-                # Truncate title if too long
-                button_text = f"{range_id}: {title[:MAX_TITLE_LENGTH]}" if len(title) > MAX_TITLE_LENGTH else f"{range_id}: {title}"
-            else:
-                # If no title, show all key-value pairs truncated
-                info = " - ".join(f"{k}: {v}" for k, v in list(item.items())[:3])
-                button_text = info[:MAX_BUTTON_TEXT_LENGTH]
-        elif isinstance(item, list):
-            range_id = str((page-1)*10 + i)
-            info = " | ".join(str(x) for x in item[:3])
-            button_text = info[:MAX_BUTTON_TEXT_LENGTH]
-        else:
-            range_id = str((page-1)*10 + i)
-            button_text = str(item)[:MAX_BUTTON_TEXT_LENGTH]
+        # Truncate if too long
+        if len(button_text) > MAX_BUTTON_TEXT_LENGTH:
+            button_text = button_text[:MAX_BUTTON_TEXT_LENGTH-3] + "..."
         
-        # Store the full item data in chat_data for later retrieval
-        if 'sms_ranges' not in context.chat_data:
-            context.chat_data['sms_ranges'] = {}
-        context.chat_data['sms_ranges'][str(range_id)] = item
-        
-        # Add button for this range
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"sms_range_{range_id}")])
+        keyboard.append([InlineKeyboardButton(
+            button_text,
+            callback_data=f"range_{range_obj.unique_id}"
+        )])
     
-    # Add pagination controls
+    # Add navigation buttons
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"sms_page_{page-1}"))
-    
-    if has_more or len(ranges) == 10:
-        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"sms_page_{page+1}"))
-    
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"view_ranges_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"view_ranges_{page+1}"))
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    keyboard.append([InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_to_main")])
+    # Add back to main menu button
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await query.edit_message_text(message, reply_markup=reply_markup)
-
-
-async def view_sms_range_detail_callback(query, context, db, db_user, range_id):
+async def view_sms_range_detail_callback(query, context, db, db_user, range_unique_id):
     """Show detailed information about a specific SMS range."""
-    log_access(db, db_user, f"view_sms_range_detail_{range_id}")
+    log_access(db, db_user, f"view_sms_range_detail_{range_unique_id}")
     
-    # Try to retrieve the range data from chat_data
-    range_data = None
-    if 'sms_ranges' in context.chat_data:
-        range_data = context.chat_data['sms_ranges'].get(str(range_id))
+    # Get range from database
+    range_obj = get_range_by_unique_id(db, range_unique_id)
     
-    if not range_data:
-        await query.answer("❌ Range data not found. Please go back and try again.")
+    if not range_obj:
+        await query.answer("❌ Range not found.")
         return
     
+    # Get total and available number counts
+    total_numbers = db.query(PhoneNumber).filter_by(range_id=range_obj.id).count()
+    available_numbers = get_available_numbers_for_range(db, range_unique_id, limit=1000)
+    available_count = len(available_numbers)
+    
     # Get price for this range
-    price = get_price_for_range(db, range_id)
+    price = get_price_for_range(db, range_unique_id)
     
     # Format the detailed message with HTML
     message = "📱 <b>SMS Range Details</b>\n\n"
-    message += f"💵 <b>Price per SMS</b>: ${price:.2f}\n\n"
-    
-    if isinstance(range_data, dict):
-        for key, value in range_data.items():
-            # Format key to be more readable
-            formatted_key = key.replace('_', ' ').title()
-            # Escape HTML special characters in value
-            escaped_value = escape_html(value)
-            message += f"<b>{formatted_key}</b>: {escaped_value}\n"
-    elif isinstance(range_data, list):
-        message += " | ".join(str(x) for x in range_data)
-    else:
-        message += str(range_data)
+    message += f"<b>Name:</b> {escape_html(range_obj.name)}\n"
+    message += f"<b>Unique ID:</b> <code>{range_unique_id}</code>\n\n"
+    message += f"📊 <b>Statistics:</b>\n"
+    message += f"  • Total Numbers: {total_numbers}\n"
+    message += f"  • Available: {available_count}\n"
+    message += f"  • Held: {total_numbers - available_count}\n\n"
+    message += f"💵 <b>Price per SMS:</b> ${price:.2f}\n"
     
     # Add buttons for actions and navigation
-    keyboard = [
-        [InlineKeyboardButton("📞 View Numbers", callback_data=f"view_numbers_{range_id}")],
-        [InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")]
-    ]
+    keyboard = []
+    
+    # If user is admin, show admin options
+    if is_user_admin(db, db_user.telegram_id):
+        keyboard.append([InlineKeyboardButton("💰 Set Price", callback_data=f"set_price_{range_unique_id}")])
+        keyboard.append([InlineKeyboardButton("🗑️ Delete Range", callback_data=f"delete_range_{range_unique_id}")])
+    
+    keyboard.append([InlineKeyboardButton("📞 Request Numbers", callback_data=f"view_numbers_{range_unique_id}")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Ranges", callback_data="view_sms_ranges")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
-async def view_sms_numbers_callback(query, context, db, db_user, range_id):
+async def view_sms_numbers_callback(query, context, db, db_user, range_unique_id):
     """Show SMS numbers for a specific range."""
-    log_access(db, db_user, f"view_sms_numbers_{range_id}")
+    log_access(db, db_user, f"view_sms_numbers_{range_unique_id}")
     
     # Clean up expired holds
     cleanup_expired_holds(db)
     
+    # Get range from database
+    range_obj = get_range_by_unique_id(db, range_unique_id)
+    if not range_obj:
+        await query.answer("❌ Range not found.")
+        return
+    
     # Get price for this range
-    price = get_price_for_range(db, range_id)
+    price = get_price_for_range(db, range_unique_id)
     
     # Check if user has sufficient balance
     if db_user.balance < price:
@@ -579,48 +563,26 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
             "Please recharge your balance to continue.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("💰 Recharge", callback_data="recharge_request"),
-                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+                InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
             ]])
         )
         return
     
-    # Get scrapper session and fetch numbers
-    scrapper = get_scrapper_session()
+    # Get available numbers from database (not held)
+    available_numbers = get_available_numbers_for_range(db, range_unique_id, limit=SMS_FETCH_COUNT)
     
-    # Fetch a larger batch to randomly select from
-    data = scrapper.get_sms_numbers(range_id, start=0, length=SMS_FETCH_COUNT)
-    
-    if not data:
+    if not available_numbers:
         await query.edit_message_text(
-            "❌ Failed to retrieve SMS numbers. Please try again later.",
+            "❌ No available numbers in this range!\n\n"
+            "All numbers are currently held by users.\n"
+            "Please try another range or try again later.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+                InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
             ]])
         )
         return
     
-    # Parse DataTables response
-    numbers = []
-    total_records = 0
-    
-    if isinstance(data, dict):
-        numbers = data.get('aaData', [])
-        # iTotalRecords might be a string, convert to int
-        total_records_raw = data.get('iTotalRecords', 0)
-        try:
-            total_records = int(total_records_raw) if total_records_raw else 0
-        except (ValueError, TypeError):
-            total_records = 0
-    
-    # Filter out numbers that are already held
-    available_numbers = []
-    for number in numbers:
-        if isinstance(number, list) and len(number) >= 4:
-            phone_number = number[3] if len(number) > 3 else None
-            if phone_number and not is_number_held(db, phone_number):
-                available_numbers.append(number)
-    
-    # Check if we have enough available numbers
+    # Check if we have enough numbers
     if len(available_numbers) < SMS_DISPLAY_COUNT:
         await query.edit_message_text(
             f"❌ Not enough available numbers in this range!\n\n"
@@ -628,48 +590,47 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_id):
             f"Required: {SMS_DISPLAY_COUNT} numbers\n\n"
             "Please try another range or try again later.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Back", callback_data=f"sms_range_{range_id}")
+                InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
             ]])
         )
         return
     
-    # Randomly select SMS_DISPLAY_COUNT numbers from available
+    # Randomly select SMS_DISPLAY_COUNT numbers
+    import random
     selected_numbers = random.sample(available_numbers, SMS_DISPLAY_COUNT)
     
-    # Extract phone numbers for holding
-    phone_numbers = []
-    for number in selected_numbers:
-        if isinstance(number, list) and len(number) >= 4:
-            phone_number = number[3] if len(number) > 3 else "N/A"
-            phone_numbers.append(phone_number)
+    # Create temporary holds for these numbers
+    phone_number_ids = [num.id for num in selected_numbers]
+    create_number_holds(db, db_user, phone_number_ids, range_unique_id)
     
-    # Create holds for selected numbers
-    create_number_holds(db, db_user, phone_numbers, range_id)
+    # Store selected numbers in context for SMS checking
+    if 'selected_numbers' not in context.user_data:
+        context.user_data['selected_numbers'] = {}
+    context.user_data['selected_numbers'][range_unique_id] = [num.number for num in selected_numbers]
+    context.user_data['current_range_id'] = range_unique_id
     
-    # Format message (escape range_id for HTML)
-    range_id_escaped = escape_html(range_id)
-    message = f"📞 <b>SMS Numbers - Range {range_id_escaped}</b>\n\n"
-    message += f"💵 Price per SMS: ${price:.2f}\n"
+    # Format message with numbers
+    message = f"📱 <b>{escape_html(range_obj.name)}</b>\n\n"
+    message += f"💵 Price: ${price:.2f} per SMS\n"
     message += f"💰 Your Balance: ${db_user.balance:.2f}\n\n"
-    message += f"🔒 These {len(phone_numbers)} numbers are now held for you.\n"
-    message += "They will be released after 5 minutes from your first retry.\n\n"
+    message += f"📞 <b>Your {SMS_DISPLAY_COUNT} Numbers:</b>\n\n"
     
-    # Format all numbers in a single code block
-    numbers_text = '\n'.join([f'{phone}' for phone in phone_numbers])
-    message += f"<pre>{numbers_text}</pre>"
+    for i, phone_num in enumerate(selected_numbers, 1):
+        message += f"{i}. <code>{phone_num.number}</code>\n"
     
-    # Create navigation keyboard (no pagination, only back buttons)
-    keyboard = []
+    message += "\n⏰ <b>Numbers are temporarily held for you.</b>\n"
+    message += "They will be released after 5 minutes of first search.\n\n"
+    message += "Use the buttons below to check for SMS:"
     
-    # Back buttons
-    keyboard.append([InlineKeyboardButton("⬅️ Back to Range Details", callback_data=f"sms_range_{range_id}")])
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
-    
+    # Create keyboard with check buttons
+    keyboard = [
+        [InlineKeyboardButton("🔍 Check for SMS", callback_data=f"check_sms_{range_unique_id}")],
+        [InlineKeyboardButton("🔄 Get New Numbers", callback_data=f"view_numbers_{range_unique_id}")],
+        [InlineKeyboardButton("⬅️ Back to Range", callback_data=f"range_{range_unique_id}")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-
-
 async def about_callback(query, context, db, db_user):
     """Show about information."""
     log_access(db, db_user, "about")
@@ -2361,9 +2322,256 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except ValueError:
                 await message.reply_text("❌ Invalid price. Please send a valid number (e.g., 2.5 or 10):")
                 return
+        
+        elif admin_action == 'set_range_price':
+            # Handle price input for a specific range
+            try:
+                price = float(text)
+                if price <= 0:
+                    await message.reply_text("❌ Price must be positive. Please try again:")
+                    return
+                
+                range_unique_id = context.user_data.get('range_unique_id')
+                range_name = context.user_data.get('range_name', 'Unknown')
+                
+                # Set the price
+                set_range_price(db, range_unique_id, range_name, price, user)
+                
+                log_access(db, user, f"set_range_price_{range_unique_id}_{price}")
+                
+                await message.reply_text(
+                    f"✅ Price set successfully!\n"
+                    f"Range: <b>{escape_html(range_name)}</b>\n"
+                    f"New Price: ${price:.2f}",
+                    parse_mode='HTML'
+                )
+                
+                context.user_data.clear()
+                
+            except ValueError:
+                await message.reply_text("❌ Invalid price. Please send a valid number (e.g., 1.50 or 5):")
+                return
     
     finally:
         db.close()
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle document uploads (CSV files)."""
+    message = update.message
+    if not message or not message.document:
+        return
+    
+    db = get_db_session()
+    
+    try:
+        user = get_or_create_user(
+            db,
+            telegram_id=message.from_user.id,
+            username=message.from_user.username
+        )
+        
+        # Check if user is admin
+        if not is_user_admin(db, user.telegram_id):
+            await message.reply_text("❌ Admin access required to upload files.")
+            return
+        
+        # Check if waiting for CSV upload
+        admin_action = context.user_data.get('admin_action')
+        if admin_action != 'upload_csv':
+            return
+        
+        document = message.document
+        
+        # Check file type
+        if not document.file_name or not document.file_name.lower().endswith('.csv'):
+            await message.reply_text("❌ Please upload a CSV file (.csv extension)")
+            return
+        
+        # Download the file
+        file = await context.bot.get_file(document.file_id)
+        import tempfile
+        import os
+        
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as temp_file:
+            temp_path = temp_file.name
+            await file.download_to_drive(temp_path)
+        
+        try:
+            # Send processing message
+            processing_msg = await message.reply_text("📤 Processing CSV file...")
+            
+            # Import CSV data
+            success_count, error_count, errors = import_csv_data(db, temp_path)
+            
+            # Format result message
+            result_msg = f"✅ <b>CSV Import Complete</b>\n\n"
+            result_msg += f"✔️ Successfully imported: {success_count} numbers\n"
+            
+            if error_count > 0:
+                result_msg += f"❌ Errors: {error_count}\n\n"
+                
+                if errors:
+                    result_msg += "<b>Error Details:</b>\n"
+                    # Show first 10 errors
+                    for error in errors[:10]:
+                        result_msg += f"• {error}\n"
+                    
+                    if len(errors) > 10:
+                        result_msg += f"\n... and {len(errors) - 10} more errors"
+            
+            await processing_msg.edit_text(result_msg, parse_mode='HTML')
+            
+            # Clear admin action
+            context.user_data.clear()
+            
+            log_access(db, user, f"csv_upload_{success_count}_success_{error_count}_errors")
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+    
+    finally:
+        db.close()
+
+
+async def admin_upload_csv_callback(query, context, db, db_user):
+    """Handle CSV upload request from admin."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_upload_csv")
+    
+    context.user_data['admin_action'] = 'upload_csv'
+    
+    message = (
+        "📤 <b>Upload CSV File</b>\n\n"
+        "Please upload a CSV file with the following columns:\n"
+        "• <b>Range</b> - Name of the SMS range\n"
+        "• <b>Number</b> - Phone number\n\n"
+        "<i>Example CSV format:</i>\n"
+        "<code>Range,Number\n"
+        "Russia Lion Whatsapp,79032454671\n"
+        "Russia Lion Whatsapp,79393992881</code>\n\n"
+        "Other columns will be ignored.\n\n"
+        "📎 Send the CSV file now:"
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def admin_manage_ranges_callback(query, context, db, db_user):
+    """Show all ranges for admin management."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_manage_ranges")
+    
+    # Get all ranges
+    all_ranges = get_all_ranges(db)
+    
+    message = "📋 <b>Manage Ranges & Prices</b>\n\n"
+    
+    if not all_ranges:
+        message += "❌ No ranges uploaded yet.\n\n"
+        message += "Please upload a CSV file first."
+    else:
+        message += f"Total Ranges: {len(all_ranges)}\n\n"
+        message += "Click on a range to set price or delete:"
+    
+    # Create keyboard with ranges
+    keyboard = []
+    
+    for range_obj, number_count in all_ranges[:15]:  # Show first 15
+        # Get current price
+        price = get_price_for_range(db, range_obj.unique_id)
+        button_text = f"{range_obj.name} (${price:.2f}) - {number_count} nums"
+        
+        if len(button_text) > MAX_BUTTON_TEXT_LENGTH:
+            button_text = button_text[:MAX_BUTTON_TEXT_LENGTH-3] + "..."
+        
+        keyboard.append([InlineKeyboardButton(
+            button_text,
+            callback_data=f"range_{range_obj.unique_id}"
+        )])
+    
+    if len(all_ranges) > 15:
+        keyboard.append([InlineKeyboardButton(
+            f"... and {len(all_ranges) - 15} more ranges",
+            callback_data="view_sms_ranges"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def admin_set_range_price_callback(query, context, db, db_user, range_unique_id):
+    """Prompt admin to set price for a range."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    range_obj = get_range_by_unique_id(db, range_unique_id)
+    if not range_obj:
+        await query.answer("❌ Range not found")
+        return
+    
+    context.user_data['admin_action'] = 'set_range_price'
+    context.user_data['range_unique_id'] = range_unique_id
+    context.user_data['range_name'] = range_obj.name
+    
+    current_price = get_price_for_range(db, range_unique_id)
+    
+    message = (
+        f"💵 <b>Set Price for Range</b>\n\n"
+        f"<b>Range:</b> {escape_html(range_obj.name)}\n"
+        f"<b>Current Price:</b> ${current_price:.2f}\n\n"
+        f"Please send the new price (e.g., 1.50):"
+    )
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data=f"range_{range_unique_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def admin_delete_range_callback(query, context, db, db_user, range_unique_id):
+    """Delete a range and all its numbers."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    range_obj = get_range_by_unique_id(db, range_unique_id)
+    if not range_obj:
+        await query.answer("❌ Range not found")
+        return
+    
+    # Delete the range
+    success = delete_range_and_numbers(db, range_unique_id)
+    
+    if success:
+        message = (
+            f"✅ <b>Range Deleted</b>\n\n"
+            f"Range '<b>{escape_html(range_obj.name)}</b>' and all its numbers have been deleted."
+        )
+    else:
+        message = "❌ Failed to delete range."
+    
+    keyboard = [[InlineKeyboardButton("⬅️ Back to Ranges", callback_data="admin_manage_ranges")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2412,6 +2620,9 @@ def main():
     
     # Register callback query handler
     application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Register document handler for CSV uploads
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
     # Register message handler for text messages (admin actions and phone search)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
