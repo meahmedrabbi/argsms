@@ -98,6 +98,7 @@ API_URL=https://your-sms-api-url/login
 DEBUG_MODE=false
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 ADMIN_TELEGRAM_IDS=123456789,987654321
+ADMIN_USERNAME=adminusername
 FORCE_JOIN_CHANNEL_ID=@yourchannel
 ```
 
@@ -108,6 +109,7 @@ FORCE_JOIN_CHANNEL_ID=@yourchannel
 - `DEBUG_MODE`: Enable debug logging (true/false)
 - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token from BotFather
 - `ADMIN_TELEGRAM_IDS`: Comma-separated list of Telegram user IDs who should have admin access
+- `ADMIN_USERNAME`: Telegram username (without @) for users to contact when requesting balance recharge
 - `FORCE_JOIN_CHANNEL_ID`: Channel username (with @) that users must join to use the bot
 
 To get a Telegram bot token:

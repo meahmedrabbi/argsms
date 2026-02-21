@@ -60,6 +60,9 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN must be set in .env file")
 
+# Get admin username for recharge contact
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+
 # Get force join channel ID
 FORCE_JOIN_CHANNEL_ID = os.getenv("FORCE_JOIN_CHANNEL_ID", "")
 
@@ -899,7 +902,14 @@ async def recharge_request_callback(query, context, db, db_user):
     message = (
         "💰 <b>Recharge Balance</b>\n\n"
         "To recharge your balance, please contact an administrator.\n\n"
-        "📞 Send a message to the admin with:\n"
+    )
+    
+    # Add admin username if configured
+    if ADMIN_USERNAME:
+        message += f"📞 <b>Contact Admin:</b> @{ADMIN_USERNAME}\n\n"
+    
+    message += (
+        "📝 Send a message to the admin with:\n"
         "• Your User ID\n"
         "• Amount you want to recharge\n"
         "• Payment proof (if required)\n\n"

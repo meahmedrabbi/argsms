@@ -41,10 +41,12 @@ PASSWORD=your_sms_system_password
 API_URL=your_sms_api_login_url
 TELEGRAM_BOT_TOKEN=your_bot_token_from_step_1
 ADMIN_TELEGRAM_IDS=your_user_id_from_step_2
+ADMIN_USERNAME=your_telegram_username (optional)
 FORCE_JOIN_CHANNEL_ID=@yourchannel (optional)
 ```
 
 **Important Configuration Notes:**
+- `ADMIN_USERNAME` is optional. If set, users will see this username when requesting balance recharge.
 - `FORCE_JOIN_CHANNEL_ID` is optional. If set, users must join that channel to use the bot.
 - To find a channel ID, go to the channel and look at its username (starts with @).
 - Multiple admin IDs can be comma-separated: `123456789,987654321`
