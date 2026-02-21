@@ -53,6 +53,8 @@ FORCE_JOIN_CHANNEL_ID=@yourchannel (optional)
 
 ## Step 4: Run the Bot
 
+### Option A: Manual Start (Development/Testing)
+
 ```bash
 python bot.py
 ```
@@ -60,6 +62,35 @@ python bot.py
 You should see:
 ```
 INFO - Starting ARGSMS Telegram Bot...
+```
+
+### Option B: Systemd Service (Production - Recommended)
+
+For production deployments, install the bot as a systemd service:
+
+```bash
+# Install the service
+sudo ./install-service.sh
+
+# Start the service
+sudo systemctl start argsms-bot
+
+# Check service status
+sudo systemctl status argsms-bot
+
+# View logs
+sudo journalctl -u argsms-bot -f
+```
+
+**Benefits:**
+- Automatic start on system boot
+- Automatic restart if bot crashes
+- Centralized logging
+- Easy service management
+
+To uninstall the service later:
+```bash
+sudo ./uninstall-service.sh
 ```
 
 ## Step 5: Use the Bot

@@ -126,6 +126,8 @@ To find your Telegram user ID:
 
 ### Starting the Bot
 
+#### Manual Start
+
 Run the bot with:
 ```bash
 python bot.py
@@ -135,6 +137,60 @@ The bot will:
 - Initialize the SQLite database (`bot.db`)
 - Connect to Telegram
 - Start listening for commands
+
+#### Running as a Systemd Service (Recommended for Production)
+
+For production deployments, you can run the bot as a systemd service that automatically starts on boot and restarts on failure.
+
+**Installation:**
+```bash
+sudo ./install-service.sh
+```
+
+The installation script will:
+- Prompt for the bot installation directory
+- Prompt for the user to run the service as
+- Create and install the systemd service
+- Enable automatic startup on boot
+
+**Service Management:**
+```bash
+# Start the service
+sudo systemctl start argsms-bot
+
+# Stop the service
+sudo systemctl stop argsms-bot
+
+# Restart the service
+sudo systemctl restart argsms-bot
+
+# Check service status
+sudo systemctl status argsms-bot
+
+# View real-time logs
+sudo journalctl -u argsms-bot -f
+
+# View logs from today
+sudo journalctl -u argsms-bot --since today
+
+# Disable service (stop auto-start on boot)
+sudo systemctl disable argsms-bot
+
+# Enable service (auto-start on boot)
+sudo systemctl enable argsms-bot
+```
+
+**Uninstallation:**
+```bash
+sudo ./uninstall-service.sh
+```
+
+**Benefits of using systemd:**
+- Automatic start on system boot
+- Automatic restart if bot crashes
+- Centralized logging with journalctl
+- Resource management and monitoring
+- Clean service lifecycle management
 
 ### User Commands
 
