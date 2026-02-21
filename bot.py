@@ -124,17 +124,22 @@ def strip_html_tags(html_str):
     return text.strip()
 
 
-async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE, db_session=None):
     """
     Check if user is a member of the required channel.
     Returns True if user is a member or no channel is configured, False otherwise.
     If False, sends a message to the user with a join button.
+    Admins bypass this check.
     """
     # If no channel is configured, skip check
     if not FORCE_JOIN_CHANNEL_ID:
         return True
     
     user_id = update.effective_user.id
+    
+    # Check if user is admin - admins bypass channel check
+    if db_session and is_user_admin(db_session, user_id):
+        return True
     
     try:
         # Check if user is a member of the channel
@@ -196,7 +201,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Check channel membership
-        if not await check_channel_membership(update, context):
+        if not await check_channel_membership(update, context, db):
             return
         
         log_access(db, db_user, "start_command")
@@ -282,7 +287,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Check channel membership for non-admin actions
         if not callback_data.startswith("admin_") and callback_data != "back_to_main":
-            if not await check_channel_membership(update, context):
+            if not await check_channel_membership(update, context, db):
                 return
         
         # Main menu callbacks
@@ -1432,7 +1437,7 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         
         # Check channel membership
-        if not await check_channel_membership(update, context):
+        if not await check_channel_membership(update, context, db):
             return
         
         # Check if this number is held by the user
