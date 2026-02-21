@@ -339,6 +339,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_export_holds_callback(query, context, db, db_user)
         elif callback_data == "admin_cleanup_holds":
             await admin_cleanup_holds_callback(query, context, db, db_user)
+        elif callback_data == "admin_release_all_holds":
+            await admin_release_all_holds_callback(query, context, db, db_user)
         elif callback_data == "admin_back":
             await admin_back_callback(query, context, db, db_user)
         
@@ -844,6 +846,7 @@ async def admin_number_holds_callback(query, context, db, db_user):
     keyboard = [
         [InlineKeyboardButton("📥 Export Report", callback_data="admin_export_holds")],
         [InlineKeyboardButton("🔄 Cleanup Expired Holds", callback_data="admin_cleanup_holds")],
+        [InlineKeyboardButton("🔓 Release All Temporary Holds", callback_data="admin_release_all_holds")],
         [InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_back")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -996,6 +999,31 @@ async def admin_cleanup_holds_callback(query, context, db, db_user):
     cleaned = cleanup_expired_holds(db)
     
     await query.answer(f"✅ Cleaned up {cleaned} expired holds", show_alert=True)
+    
+    # Refresh the number holds view
+    await admin_number_holds_callback(query, context, db, db_user)
+
+
+async def admin_release_all_holds_callback(query, context, db, db_user):
+    """Release all temporary holds (admin only)."""
+    if not is_user_admin(db, db_user.telegram_id):
+        await query.answer("❌ Admin access required", show_alert=True)
+        return
+    
+    log_access(db, db_user, "admin_release_all_holds")
+    
+    # Count temporary holds before deletion
+    temp_holds_count = db.query(NumberHold).filter(
+        NumberHold.is_permanent == False
+    ).count()
+    
+    # Delete all temporary holds (keep permanent ones)
+    db.query(NumberHold).filter(
+        NumberHold.is_permanent == False
+    ).delete()
+    db.commit()
+    
+    await query.answer(f"✅ Released {temp_holds_count} temporary holds", show_alert=True)
     
     # Refresh the number holds view
     await admin_number_holds_callback(query, context, db, db_user)

@@ -421,19 +421,42 @@ def is_number_held(db_session, phone_number_str):
 
 
 def cleanup_expired_holds(db_session):
-    """Remove holds that have expired (5 minutes after first retry)."""
+    """Remove holds that have expired.
+    
+    Expiration rules:
+    - If first_retry_time is set: 5 minutes after first_retry_time
+    - If first_retry_time is None: 10 minutes after hold_start_time
+    """
     from datetime import datetime, timedelta
     
-    five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+    now = datetime.utcnow()
+    five_minutes_ago = now - timedelta(minutes=5)
+    ten_minutes_ago = now - timedelta(minutes=10)
     
-    # Delete non-permanent holds where first_retry_time is set and more than 5 minutes ago
-    db_session.query(NumberHold).filter(
-        NumberHold.is_permanent.is_(False),
-        NumberHold.first_retry_time.isnot(None),
-        NumberHold.first_retry_time < five_minutes_ago
-    ).delete()
+    # Delete non-permanent holds where:
+    # 1. first_retry_time is set and more than 5 minutes ago, OR
+    # 2. first_retry_time is None and hold_start_time is more than 10 minutes ago
+    expired_holds = db_session.query(NumberHold).filter(
+        NumberHold.is_permanent.is_(False)
+    ).filter(
+        db.or_(
+            # Case 1: first_retry_time is set and expired
+            db.and_(
+                NumberHold.first_retry_time.isnot(None),
+                NumberHold.first_retry_time < five_minutes_ago
+            ),
+            # Case 2: first_retry_time is None and hold is old
+            db.and_(
+                NumberHold.first_retry_time.is_(None),
+                NumberHold.hold_start_time < ten_minutes_ago
+            )
+        )
+    )
     
+    count = expired_holds.delete()
     db_session.commit()
+    
+    return count
 
 
 def update_first_retry_time(db_session, user, phone_number_str):
