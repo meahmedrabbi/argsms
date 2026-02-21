@@ -1692,7 +1692,7 @@ async def handle_phone_search(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Check if this number is held by the user
         held_number = db.query(NumberHold).filter_by(
             user_id=user.id,
-            phone_number=phone_number
+            phone_number_str=phone_number
         ).first()
         
         if not held_number:
@@ -2064,7 +2064,7 @@ async def retry_sms_callback(query, context, db, db_user):
     # Check if this number is held by the user
     held_number = db.query(NumberHold).filter_by(
         user_id=db_user.id,
-        phone_number=phone_number
+        phone_number_str=phone_number
     ).first()
     
     if not held_number:
