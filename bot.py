@@ -408,9 +408,16 @@ async def view_sms_ranges_callback(query, context, db, db_user, page=1):
     data = scrapper.get_sms_ranges(max_results=10, page=page)
     
     if not data:
-        await query.edit_message_text(
-            "❌ Failed to retrieve SMS ranges. Please try again later."
+        error_msg = (
+            "❌ Failed to retrieve SMS ranges.\n\n"
+            "This could be due to:\n"
+            "• API server is temporarily down\n"
+            "• Network connection issue\n"
+            "• Authentication failure\n\n"
+            "Please try again in a few moments. If the problem persists, contact the administrator."
         )
+        await query.edit_message_text(error_msg)
+        logger.error(f"Failed to retrieve SMS ranges for user {db_user.telegram_id}")
         return
     
     # Handle different possible JSON structures
@@ -1230,12 +1237,21 @@ async def select_range_for_price_callback(query, context, db, db_user):
     data = scrapper.get_sms_ranges(max_results=20, page=1)
     
     if not data:
+        error_msg = (
+            "❌ Failed to retrieve SMS ranges.\n\n"
+            "This could be due to:\n"
+            "• API server is temporarily down\n"
+            "• Network connection issue\n"
+            "• Authentication failure\n\n"
+            "Please try again in a few moments."
+        )
         await query.edit_message_text(
-            "❌ Failed to retrieve SMS ranges. Please try again later.",
+            error_msg,
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ Back", callback_data="admin_price_ranges")
             ]])
         )
+        logger.error(f"Failed to retrieve SMS ranges for admin {db_user.telegram_id}")
         return
     
     # Parse ranges
