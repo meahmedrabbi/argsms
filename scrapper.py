@@ -127,18 +127,21 @@ def login(session, url, username, password):
     debug_print(f"[DEBUG] Using username: {username[:3]}***{username[-2:] if len(username) > 4 else '***'}")
     
     try:
-        login_page = session.get(url)
+        login_page = session.get(url, timeout=15)
         debug_print(f"[DEBUG] GET request successful. Status: {login_page.status_code}")
         debug_print(f"[DEBUG] Cookies received: {dict(session.cookies)}")
         login_page.raise_for_status()
+    except requests.Timeout:
+        print(f"\n[ERROR] Login page request timed out after 15 seconds")
+        raise
     except requests.HTTPError as e:
         print(f"\n[ERROR] Failed to access login page. HTTP Status: {e.response.status_code}")
         debug_print(f"[DEBUG] Response body (first 500 chars):")
         debug_print(e.response.text[:500])
-        sys.exit(1)
+        raise
     except requests.RequestException as e:
         print(f"\n[ERROR] Network error while accessing login page: {e}")
-        sys.exit(1)
+        raise
 
     soup = BeautifulSoup(login_page.text, "html.parser")
 
@@ -228,19 +231,22 @@ def login(session, url, username, password):
 
     print(f"  → Submitting login form...")
     try:
-        response = session.post(action, data=payload)
+        response = session.post(action, data=payload, timeout=15)
         debug_print(f"[DEBUG] POST request successful. Status: {response.status_code}")
         debug_print(f"[DEBUG] Response URL (after redirects): {response.url}")
         response.raise_for_status()
+    except requests.Timeout:
+        print(f"\n[ERROR] Login form submission timed out after 15 seconds")
+        raise
     except requests.HTTPError as e:
         print(f"\n[ERROR] Login failed. HTTP Status: {e.response.status_code}")
         debug_print(f"[DEBUG] Response URL: {e.response.url}")
         debug_print(f"[DEBUG] Response body (first 1000 chars):")
         debug_print(e.response.text[:1000])
-        sys.exit(1)
+        raise
     except requests.RequestException as e:
         print(f"\n[ERROR] Network error during login: {e}")
-        sys.exit(1)
+        raise
 
     # Check for common signs of failed authentication
     result_soup = BeautifulSoup(response.text, "html.parser")
@@ -310,7 +316,7 @@ def get_sms_ranges(session, base_url, max_results=25, page=1):
     debug_print(f"[DEBUG] Parameters: {params}")
     
     try:
-        response = session.get(api_endpoint, params=params, headers=headers)
+        response = session.get(api_endpoint, params=params, headers=headers, timeout=15)
         response.raise_for_status()
         
         # Store response text before parsing (for error handling)
@@ -323,6 +329,9 @@ def get_sms_ranges(session, base_url, max_results=25, page=1):
         
         return data
         
+    except requests.Timeout:
+        print(f"[ERROR] Request timed out after 15 seconds while fetching SMS ranges")
+        return None
     except requests.HTTPError as e:
         print(f"[ERROR] Failed to fetch SMS ranges. HTTP Status: {e.response.status_code}")
         debug_print(f"[DEBUG] Response text: {e.response.text[:500]}")

@@ -41,9 +41,19 @@ PASSWORD=your_sms_system_password
 API_URL=your_sms_api_login_url
 TELEGRAM_BOT_TOKEN=your_bot_token_from_step_1
 ADMIN_TELEGRAM_IDS=your_user_id_from_step_2
+ADMIN_USERNAME=your_telegram_username (optional)
+FORCE_JOIN_CHANNEL_ID=@yourchannel (optional)
 ```
 
+**Important Configuration Notes:**
+- `ADMIN_USERNAME` is optional. If set, users will see this username when requesting balance recharge.
+- `FORCE_JOIN_CHANNEL_ID` is optional. If set, users must join that channel to use the bot.
+- To find a channel ID, go to the channel and look at its username (starts with @).
+- Multiple admin IDs can be comma-separated: `123456789,987654321`
+
 ## Step 4: Run the Bot
+
+### Option A: Manual Start (Development/Testing)
 
 ```bash
 python bot.py
@@ -54,12 +64,75 @@ You should see:
 INFO - Starting ARGSMS Telegram Bot...
 ```
 
+### Option B: Systemd Service (Production - Recommended)
+
+For production deployments, install the bot as a systemd service:
+
+```bash
+# Install the service
+sudo ./install-service.sh
+
+# Start the service
+sudo systemctl start argsms-bot
+
+# Check service status
+sudo systemctl status argsms-bot
+
+# View logs
+sudo journalctl -u argsms-bot -f
+```
+
+**Benefits:**
+- Automatic start on system boot
+- Automatic restart if bot crashes
+- Centralized logging
+- Easy service management
+
+To uninstall the service later:
+```bash
+sudo ./uninstall-service.sh
+```
+
 ## Step 5: Use the Bot
 
 1. Open Telegram and search for your bot (the name you created in Step 1)
 2. Send `/start` to begin
 3. Use the inline menu to navigate
-4. As an admin, use `/admin` to access the admin panel
+
+**As a regular user:**
+- View SMS ranges and request numbers
+- Check your profile for balance and stats
+- Request balance recharge
+- Search phone numbers for SMS
+
+**As an admin:**
+- Use `/admin` to access the admin panel
+- All management tasks done through inline buttons:
+  - Select users from lists to ban/unban
+  - Select users to add/deduct balance
+  - Enter amounts through chat messages
+  - Set price ranges interactively
+- View comprehensive statistics
+
+## Initial Setup for Admins
+
+After starting the bot for the first time:
+
+1. **Add Initial Balance**: 
+   - Go to `/admin` → "💰 Manage Balance"
+   - Select yourself from the list
+   - Click ➕ button
+   - Send the amount (e.g., "100")
+
+2. **Set Default Price**: 
+   - Go to `/admin` → "💵 Set Price Ranges"
+   - Click "➕ Add Price Range"
+   - Send "default"
+   - Send "1.0"
+
+3. **Add Specific Prices**: 
+   - Repeat above steps with patterns like "russia", "usa"
+   - Send prices like "2.5", "3.0"
 
 ## Troubleshooting
 

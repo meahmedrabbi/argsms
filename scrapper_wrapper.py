@@ -41,25 +41,36 @@ class ScrapperSession:
         cookies_loaded = load_cookies(self.session)
         
         if cookies_loaded:
-            # Check if cookies are still valid
+            # Check if cookies are still valid with timeout
             try:
-                test_response = self.session.get(API_URL)
+                test_response = self.session.get(API_URL, timeout=10)
                 if test_response.status_code == 200 and "login" not in test_response.url.lower():
                     self._authenticated = True
                     self._extract_base_url()
+                    logger.info("Authentication successful (using saved cookies)")
                     return True
+            except requests.Timeout:
+                logger.error("Cookie validation timed out after 10 seconds")
             except requests.RequestException as e:
                 logger.warning(f"Cookie validation failed: {e}")
         
         # If cookies not valid, perform login
         try:
+            logger.info("Attempting to authenticate with credentials...")
             login_response = login(self.session, API_URL, LOGIN_USERNAME, PASSWORD)
             save_cookies(self.session)
             self._authenticated = True
             self._extract_base_url()
+            logger.info("Authentication successful (new login)")
             return True
+        except requests.Timeout as e:
+            logger.error(f"Login timed out: {e}")
+            return False
+        except requests.RequestException as e:
+            logger.error(f"Network error during authentication: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Authentication failed: {e}")
+            logger.error(f"Authentication failed: {e}", exc_info=True)
             return False
     
     def _extract_base_url(self):
@@ -71,13 +82,29 @@ class ScrapperSession:
     def get_sms_ranges(self, max_results=25, page=1):
         """Get SMS ranges from the API."""
         if not self.ensure_authenticated():
+            logger.error("Cannot get SMS ranges: Authentication failed")
             return None
         
         try:
+            logger.debug(f"Fetching SMS ranges (page={page}, max_results={max_results})")
             data = get_sms_ranges(self.session, self.base_url, max_results=max_results, page=page)
+            if data:
+                logger.info(f"Successfully fetched SMS ranges (page {page})")
+            else:
+                logger.warning(f"API returned no data for SMS ranges (page {page})")
             return data
+        except requests.Timeout as e:
+            logger.error(f"Timeout getting SMS ranges: {e}")
+            # Reset authentication flag to force re-login on next attempt
+            self._authenticated = False
+            return None
+        except requests.RequestException as e:
+            logger.error(f"Network error getting SMS ranges: {e}")
+            # Reset authentication flag to force re-login on next attempt
+            self._authenticated = False
+            return None
         except Exception as e:
-            logger.error(f"Error getting SMS ranges: {e}")
+            logger.error(f"Unexpected error getting SMS ranges: {e}", exc_info=True)
             # Reset authentication flag to force re-login on next attempt
             self._authenticated = False
             return None

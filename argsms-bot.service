@@ -1,0 +1,24 @@
+[Unit]
+Description=ARGSMS Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/argsms
+Environment="PATH=/root/argsms/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/root/argsms/venv/bin/python /root/argsms/bot.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=argsms-bot
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
