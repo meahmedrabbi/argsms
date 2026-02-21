@@ -22,7 +22,11 @@ A Telegram bot for managing and viewing SMS ranges from the ARGSMS system with a
                       ├── 💰 Manage Balance
                       ├── 💳 Recharge Requests
                       ├── 💵 Set Price Ranges
-                      └── 📊 View Stats
+                      ├── 📊 View Stats
+                      └── 🔒 Number Holds Report
+                           ├── View holds analysis
+                           ├── 📥 Export Excel report
+                           └── 🔄 Cleanup expired holds
                       
 ┌──────────────────────────────────────────────────┐
 │ Bot Components                                   │
@@ -59,11 +63,14 @@ A Telegram bot for managing and viewing SMS ranges from the ARGSMS system with a
 ### Admin Features
 - **User Management**: View and manage all bot users
 - **Ban/Unban Users**: Control user access to the bot
-- **Balance Management**: Add or deduct user balance via commands
-- **Price Range Configuration**: Set SMS prices based on range patterns
+- **Balance Management**: Add or deduct user balance by Telegram user ID
+- **Price Range Configuration**: Set SMS prices by selecting actual ranges from API
 - **Recharge Management**: View and process user recharge requests
 - **Advanced Statistics**: Track usage, revenue, and user activity
 - **Admin Assignment**: Grant or revoke admin privileges
+- **Number Holds Analysis**: View detailed reports of held numbers by users
+- **Excel Export**: Export comprehensive number holds reports as Excel files
+- **Manual Cleanup**: One-click cleanup of expired number holds
 
 ### Technical Features
 - **SMS Number Holding**: Temporary holds that auto-release after 5 minutes
