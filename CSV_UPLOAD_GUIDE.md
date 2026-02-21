@@ -52,7 +52,7 @@ UK Vodafone 21 Nov,447123456790
 
 ### Range Unique IDs
 
-Each range gets a unique ID (MD5 hash of range name). This means:
+Each range gets a unique ID (SHA-256 hash of range name). This means:
 - Same range name = same range
 - Numbers with same range name are grouped together
 - Uploading same range again updates the numbers
@@ -62,6 +62,27 @@ Each range gets a unique ID (MD5 hash of range name). This means:
 - Duplicate numbers are handled automatically
 - If a number exists, its range association is updated
 - Numbers not in holds are available for users
+
+### Number Hold System
+
+When users request numbers, they are held temporarily:
+
+**Expiration Rules:**
+- **Initial hold**: 10 minutes from request time (if user never searches)
+- **After first search**: 5 minutes from first SMS search attempt
+- **Automatic cleanup**: Expired holds are released automatically
+
+**Admin Controls:**
+- **Analyze Holds**: View statistics and top users/ranges
+- **Export Report**: Download Excel with all hold details
+- **Cleanup Expired**: Manually trigger expiration cleanup
+- **Release All**: Emergency button to free all temporary holds
+
+**Why Numbers Get Held:**
+- Users request 20 numbers → temporary holds created
+- If users abandon search → holds expire after 10 minutes
+- If users search for SMS → holds expire 5 minutes after first search
+- If SMS received → hold becomes permanent (never expires)
 
 ### Price System
 
@@ -107,9 +128,19 @@ You can upload the same CSV multiple times:
 - Admin needs to upload CSV first
 
 **"❌ Not enough available numbers"**
-- All numbers are held by users
-- Check "🔒 Number Holds Report"
-- Upload more numbers or wait for holds to expire
+- Too many numbers are held by users
+- Use admin panel → "🔒 Number Holds Report" to analyze
+- Options to fix:
+  1. Wait for automatic expiration (10 min for abandoned requests)
+  2. Click "🔄 Cleanup Expired Holds" to manually trigger cleanup
+  3. Click "🔓 Release All Temporary Holds" to free everything (emergency)
+  4. Upload more numbers via CSV
+
+**Why are so many numbers held?**
+- Users requested numbers but didn't search for SMS
+- Old system: holds never expired without first_retry_time
+- New system: holds expire after 10 minutes automatically
+- Solution: Use "Release All" button or wait for automatic cleanup
 
 **CSV import errors**
 - Check CSV has "Range" and "Number" columns

@@ -236,6 +236,20 @@ All other features are accessed through the inline menu interface - no additiona
   - Numbers with successful SMS are permanently held
 - **About**: Learn about the bot and available commands
 
+#### Number Hold System:
+
+When users request numbers, they are **temporarily held** for that user:
+- **Initial hold**: 10 minutes from request time
+- **After first search**: 5 minutes from first SMS search attempt
+- **Automatic release**: Expired holds are cleaned up automatically
+- **Permanent holds**: Numbers that successfully receive SMS are held permanently
+
+**Admin Controls for Number Holds:**
+- **Analyze Holds**: View statistics on all held numbers
+- **Export Report**: Generate Excel report with detailed hold information
+- **Cleanup Expired**: Manually trigger cleanup of expired holds
+- **Release All**: Emergency button to release all temporary holds at once
+
 #### For Administrators:
 - **List Users**: View all registered bot users with balance info
 - **Manage Admins**: Grant or revoke admin privileges through interactive menu
