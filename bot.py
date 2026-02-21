@@ -360,7 +360,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # View SMS numbers for a range
         elif callback_data.startswith("view_numbers_"):
             range_unique_id = callback_data[len("view_numbers_"):]
-            await view_sms_numbers_callback(query, context, db, db_user, range_id)
+            await view_sms_numbers_callback(query, context, db, db_user, range_unique_id)
         
         # Pagination callbacks
         elif callback_data.startswith("sms_page_"):
@@ -592,11 +592,10 @@ async def view_sms_numbers_callback(query, context, db, db_user, range_unique_id
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ Back", callback_data=f"range_{range_unique_id}")
             ]])
-        )
+            )
         return
     
     # Randomly select SMS_DISPLAY_COUNT numbers
-    import random
     selected_numbers = random.sample(available_numbers, SMS_DISPLAY_COUNT)
     
     # Create temporary holds for these numbers
@@ -2432,7 +2431,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Clean up temporary file
             try:
                 os.unlink(temp_path)
-            except:
+            except OSError:
                 pass
     
     finally:

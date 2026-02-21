@@ -455,8 +455,8 @@ def update_first_retry_time(db_session, user, phone_number_str):
 def generate_range_unique_id(range_name):
     """Generate a unique ID for a range based on its name."""
     import hashlib
-    # Create a hash of the range name for unique ID
-    return hashlib.md5(range_name.encode()).hexdigest()[:16]
+    # Use SHA-256 for better collision resistance
+    return hashlib.sha256(range_name.encode()).hexdigest()[:16]
 
 
 def import_csv_data(db_session, csv_file_path):
@@ -530,7 +530,7 @@ def import_csv_data(db_session, csv_file_path):
                         success_count += 1
                 
                 except Exception as e:
-                    errors.append(f"Row {row_num}: {str(e)}")
+                    errors.append(f"Row {row_num}: Database error - {str(e)}")
                     error_count += 1
             
             db_session.commit()
