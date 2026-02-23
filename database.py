@@ -588,7 +588,7 @@ def get_available_numbers_for_range(db_session, range_unique_id, limit=100):
     # Get phone numbers that are not currently held (temporary or permanent)
     held_number_ids = db_session.query(NumberHold.phone_number_id).filter(
         NumberHold.phone_number_id.isnot(None)
-    ).distinct().subquery()
+    ).distinct().scalar_subquery()
     
     available_numbers = db_session.query(PhoneNumber).filter(
         PhoneNumber.range_id == range_obj.id,

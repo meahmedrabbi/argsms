@@ -2950,7 +2950,7 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
             # Found a match! Process it
             try:
                 # Get the user who holds this number
-                user = db.query(User).get(hold.user_id)
+                user = db.get(User, hold.user_id)
                 if not user:
                     continue
 
