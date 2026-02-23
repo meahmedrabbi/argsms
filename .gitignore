@@ -9,3 +9,5 @@ build/
 venv/
 .cookies.pkl
 bot.db
+*.db
+*.db.back
