@@ -2948,6 +2948,8 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
 
                 # Get price for this range
                 price = get_price_for_range(db, hold.range_id)
+                if price is None or price < 0:
+                    price = 1.0
 
                 # Deduct balance
                 balance_info = ""
@@ -2959,11 +2961,10 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
 
                 if new_balance is not None:
                     balance_info = f"💸 Charged: ${price:.2f}\n💰 Remaining Balance: ${new_balance:.2f}"
+                    # Mark as permanent hold only after successful balance deduction
+                    mark_number_permanent(db, user, hold.phone_number_str)
                 else:
                     balance_info = f"⚠️ Insufficient balance (needed ${price:.2f}, has ${user.balance:.2f})"
-
-                # Mark as permanent hold
-                mark_number_permanent(db, user, hold.phone_number_str)
 
                 # Remove from lookup so we don't process again in this batch
                 del holds_by_number[sms_number_clean]
