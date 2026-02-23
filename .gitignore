@@ -11,3 +11,5 @@ venv/
 bot.db
 *.db
 *.db.back
+*.db
+*.db.back
