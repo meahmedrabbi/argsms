@@ -40,6 +40,7 @@ from database import (
     is_number_held,
     cleanup_expired_holds,
     update_first_retry_time,
+    get_all_active_holds,
     User,
     NumberHold,
     PriceRange,
@@ -77,6 +78,11 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 
 # Get force join channel ID
 FORCE_JOIN_CHANNEL_ID = os.getenv("FORCE_JOIN_CHANNEL_ID", "")
+
+# Auto SMS fetch settings
+SMS_FETCH_INTERVAL = int(os.getenv("SMS_FETCH_INTERVAL", "15"))
+SMS_GROUP_CHAT_ID = os.getenv("SMS_GROUP_CHAT_ID", "")
+HOLD_EXPIRY_HOURS = int(os.getenv("HOLD_EXPIRY_HOURS", "6"))
 
 # Constants for button text formatting
 MAX_BUTTON_TEXT_LENGTH = 60
@@ -2867,6 +2873,145 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.debug(f"Full traceback:\n{tb_string}")
 
 
+def normalize_phone_number(number):
+    """Normalize a phone number by removing non-digit characters."""
+    if not number:
+        return ""
+    return re.sub(r'[^\d]', '', str(number))
+
+
+def mask_phone_number(number):
+    """Mask a phone number showing only first 3 and last 3 digits."""
+    clean = re.sub(r'[^\d]', '', str(number)) if number else ""
+    if len(clean) <= 6:
+        return clean
+    return clean[:3] + '*' * (len(clean) - 6) + clean[-3:]
+
+
+async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic job to fetch SMS from server and post new messages to the group."""
+    if not SMS_GROUP_CHAT_ID:
+        return
+
+    db = get_db_session()
+    try:
+        # Clean up expired holds (6 hours by default)
+        cleaned = cleanup_expired_holds(db, expiry_hours=HOLD_EXPIRY_HOURS)
+        if cleaned > 0:
+            logger.info(f"Auto-cleanup: Released {cleaned} expired holds")
+
+        # Get all active (non-permanent) holds
+        active_holds = get_all_active_holds(db)
+        if not active_holds:
+            return
+
+        # Build a lookup of normalized phone numbers to holds
+        holds_by_number = {}
+        for hold in active_holds:
+            normalized = normalize_phone_number(hold.phone_number_str)
+            if normalized:
+                holds_by_number[normalized] = hold
+
+        if not holds_by_number:
+            return
+
+        # Fetch all recent SMS from server
+        scrapper = get_scrapper_session()
+        data = scrapper.get_all_recent_sms()
+
+        if not data:
+            return
+
+        messages = data.get('aaData', [])
+        if not messages:
+            return
+
+        # Process each SMS message
+        for msg in messages:
+            if not isinstance(msg, list) or len(msg) < 6:
+                continue
+
+            # Skip stats rows
+            if is_stats_row(msg):
+                continue
+
+            # Extract the phone number from the SMS record (column index 2)
+            sms_number_raw = msg[2] if len(msg) > 2 else ""
+            sms_number_clean = normalize_phone_number(strip_html_tags(str(sms_number_raw)))
+
+            if not sms_number_clean:
+                continue
+
+            # Check if this number matches any active hold
+            hold = holds_by_number.get(sms_number_clean)
+            if not hold:
+                continue
+
+            # Found a match! Process it
+            try:
+                # Get the user who holds this number
+                user = db.query(User).get(hold.user_id)
+                if not user:
+                    continue
+
+                # Use the rate from the API response (column index 7)
+                try:
+                    price = float(msg[7]) if len(msg) > 7 and msg[7] is not None else 0.0
+                except (ValueError, TypeError):
+                    price = 0.0
+                if price < 0:
+                    price = 0.0
+
+                # Deduct balance
+                new_balance = deduct_user_balance(
+                    db, user, price,
+                    transaction_type='sms_charge',
+                    description=f"SMS received on {hold.phone_number_str}"
+                )
+
+                if new_balance is not None:
+                    # Mark as permanent hold only after successful balance deduction
+                    mark_number_permanent(db, user, hold.phone_number_str)
+                else:
+                    logger.warning(f"Auto-SMS: Insufficient balance for user {user.telegram_id}")
+
+                # Remove from lookup so we don't process again in this batch
+                del holds_by_number[sms_number_clean]
+
+                # Extract SMS details
+                sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
+                sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
+                sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
+                masked_number = mask_phone_number(hold.phone_number_str)
+
+                # Build group message with only required fields
+                group_message = (
+                    f"📨 <b>From:</b> {sms_sender}\n"
+                    f"🕒 <b>Time:</b> {sms_time}\n"
+                    f"📞 <b>Number:</b> <code>{escape_html(masked_number)}</code>\n"
+                    f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
+                )
+
+                # Post to private group
+                try:
+                    await context.bot.send_message(
+                        chat_id=SMS_GROUP_CHAT_ID,
+                        text=group_message,
+                        parse_mode='HTML'
+                    )
+                    logger.info(f"Auto-SMS: Posted SMS for {hold.phone_number_str} (user {user.telegram_id})")
+                except Exception as e:
+                    logger.error(f"Auto-SMS: Failed to post to group: {e}")
+
+            except Exception as e:
+                logger.error(f"Auto-SMS: Error processing hold {hold.id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Auto-SMS job error: {e}")
+    finally:
+        db.close()
+
+
 def main():
     """Start the bot."""
     # Create the Application
@@ -2887,6 +3032,17 @@ def main():
     
     # Register error handler
     application.add_error_handler(error_handler)
+    
+    # Register auto SMS fetch job if group chat ID is configured
+    if SMS_GROUP_CHAT_ID:
+        job_queue = application.job_queue
+        job_queue.run_repeating(
+            auto_fetch_sms_job,
+            interval=SMS_FETCH_INTERVAL,
+            first=SMS_FETCH_INTERVAL,
+            name="auto_fetch_sms"
+        )
+        logger.info(f"Auto SMS fetch enabled: interval={SMS_FETCH_INTERVAL}s, group={SMS_GROUP_CHAT_ID}, hold_expiry={HOLD_EXPIRY_HOURS}h")
     
     # Start the bot
     logger.info("Starting ARGSMS Telegram Bot...")

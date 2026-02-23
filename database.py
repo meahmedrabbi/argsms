@@ -420,31 +420,36 @@ def is_number_held(db_session, phone_number_str):
     return hold is not None
 
 
-def cleanup_expired_holds(db_session):
+def cleanup_expired_holds(db_session, expiry_hours=6):
     """Remove holds that have expired.
     
     Expiration rules:
-    - Each number is released individually 5 minutes after the user first
-      searched/retried it (first_retry_time is set).
-    - Numbers that were never searched are NOT released automatically.
+    - Non-permanent holds are released after expiry_hours (default 6 hours)
+      from when they were created (hold_start_time).
+    - Permanent holds (successful SMS) are never released.
     """
     from datetime import datetime, timedelta
     
     now = datetime.utcnow()
-    five_minutes_ago = now - timedelta(minutes=5)
+    expiry_time = now - timedelta(hours=expiry_hours)
     
-    # Delete non-permanent holds where the user has searched the number
-    # (first_retry_time is set) and 5 minutes have passed since that search
+    # Delete non-permanent holds that are older than expiry_hours
     expired_holds = db_session.query(NumberHold).filter(
         NumberHold.is_permanent.is_(False),
-        NumberHold.first_retry_time.isnot(None),
-        NumberHold.first_retry_time < five_minutes_ago
+        NumberHold.hold_start_time < expiry_time
     )
     
     count = expired_holds.delete()
     db_session.commit()
     
     return count
+
+
+def get_all_active_holds(db_session):
+    """Get all non-permanent (active) holds with their associated users."""
+    return db_session.query(NumberHold).filter(
+        NumberHold.is_permanent.is_(False)
+    ).all()
 
 
 def update_first_retry_time(db_session, user, phone_number_str):

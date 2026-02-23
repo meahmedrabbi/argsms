@@ -73,7 +73,8 @@ A Telegram bot for managing and viewing SMS ranges from the ARGSMS system with a
 - **Manual Cleanup**: One-click cleanup of expired number holds
 
 ### Technical Features
-- **SMS Number Holding**: Temporary holds that auto-release after 5 minutes
+- **Automatic SMS Delivery**: Periodically fetches SMS from the server and posts new messages to a private group
+- **SMS Number Holding**: Temporary holds that auto-release after configurable hours (default 6)
 - **Dynamic Pricing**: Pattern-based pricing for different SMS ranges
 - **Balance Deduction**: Automatic charge when SMS is successfully received
 - **Comprehensive Logging**: Track all user actions and transactions
@@ -107,6 +108,11 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 ADMIN_TELEGRAM_IDS=123456789,987654321
 ADMIN_USERNAME=adminusername
 FORCE_JOIN_CHANNEL_ID=@yourchannel
+
+# Auto SMS Fetch Settings
+SMS_FETCH_INTERVAL=15
+SMS_GROUP_CHAT_ID=
+HOLD_EXPIRY_HOURS=6
 ```
 
 **Configuration Details:**
@@ -118,6 +124,9 @@ FORCE_JOIN_CHANNEL_ID=@yourchannel
 - `ADMIN_TELEGRAM_IDS`: Comma-separated list of Telegram user IDs who should have admin access
 - `ADMIN_USERNAME`: Telegram username (without @) for users to contact when requesting balance recharge
 - `FORCE_JOIN_CHANNEL_ID`: Channel username (with @) that users must join to use the bot
+- `SMS_FETCH_INTERVAL`: Interval in seconds for automatic SMS fetching (default: 15)
+- `SMS_GROUP_CHAT_ID`: Telegram group/channel chat ID where new SMS messages are posted automatically (leave empty to disable)
+- `HOLD_EXPIRY_HOURS`: Hours before non-permanent number holds are automatically released (default: 6)
 
 To get a Telegram bot token:
 1. Message [@BotFather](https://t.me/botfather) on Telegram
@@ -239,10 +248,10 @@ All other features are accessed through the inline menu interface - no additiona
 #### Number Hold System:
 
 When users request numbers, they are **temporarily held** for that user:
-- **Initial hold**: 10 minutes from request time
-- **After first search**: 5 minutes from first SMS search attempt
+- **Auto-release**: Non-permanent holds are released after configurable hours (default 6)
+- **Automatic SMS delivery**: Bot fetches SMS every N seconds and posts to a private group
 - **Automatic release**: Expired holds are cleaned up automatically
-- **Permanent holds**: Numbers that successfully receive SMS are held permanently
+- **Permanent holds**: Numbers that successfully receive SMS are held permanently and balance is deducted
 
 **Admin Controls for Number Holds:**
 - **Analyze Holds**: View statistics on all held numbers
