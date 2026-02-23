@@ -139,6 +139,10 @@ class ScrapperSession:
             self._authenticated = False
             return None
 
+    def get_all_recent_sms(self, date_from=None, date_to=None, start=0, length=500):
+        """Get all recent SMS messages from the API (no phone number filter)."""
+        return self.get_sms_messages("", date_from=date_from, date_to=date_to, start=start, length=length)
+
 
 # Global scrapper session instance
 _scrapper_session = None
