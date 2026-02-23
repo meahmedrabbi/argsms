@@ -2970,6 +2970,7 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
 
                 # Extract SMS details
                 sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
+                sms_range = escape_html(strip_html_tags(str(msg[1]))) if len(msg) > 1 and msg[1] else "N/A"
                 sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
                 sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
 
@@ -2979,6 +2980,7 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                     f"📱 <b>New SMS Received!</b>\n\n"
                     f"📞 <b>Number:</b> <code>{escape_html(hold.phone_number_str)}</code>\n"
                     f"👤 <b>User:</b> {escape_html(username_display)}\n"
+                    f"📋 <b>Range:</b> {sms_range}\n"
                     f"🕒 <b>Time:</b> {sms_time}\n"
                     f"📨 <b>From:</b> {sms_sender}\n"
                     f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>\n\n"
