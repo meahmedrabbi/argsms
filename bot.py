@@ -2880,6 +2880,14 @@ def normalize_phone_number(number):
     return re.sub(r'[^\d]', '', str(number))
 
 
+def mask_phone_number(number):
+    """Mask a phone number showing only first 3 and last 3 digits."""
+    clean = re.sub(r'[^\d]', '', str(number)) if number else ""
+    if len(clean) <= 6:
+        return clean
+    return clean[:3] + '*' * (len(clean) - 6) + clean[-3:]
+
+
 async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
     """Periodic job to fetch SMS from server and post new messages to the group."""
     if not SMS_GROUP_CHAT_ID:
@@ -2946,13 +2954,15 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                 if not user:
                     continue
 
-                # Get price for this range
-                price = get_price_for_range(db, hold.range_id)
-                if price is None or price < 0:
-                    price = 1.0
+                # Use the rate from the API response (column index 7)
+                try:
+                    price = float(msg[7]) if len(msg) > 7 and msg[7] is not None else 0.0
+                except (ValueError, TypeError):
+                    price = 0.0
+                if price < 0:
+                    price = 0.0
 
                 # Deduct balance
-                balance_info = ""
                 new_balance = deduct_user_balance(
                     db, user, price,
                     transaction_type='sms_charge',
@@ -2960,32 +2970,26 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 if new_balance is not None:
-                    balance_info = f"💸 Charged: ${price:.2f}\n💰 Remaining Balance: ${new_balance:.2f}"
                     # Mark as permanent hold only after successful balance deduction
                     mark_number_permanent(db, user, hold.phone_number_str)
                 else:
-                    balance_info = f"⚠️ Insufficient balance (needed ${price:.2f}, has ${user.balance:.2f})"
+                    logger.warning(f"Auto-SMS: Insufficient balance for user {user.telegram_id}")
 
                 # Remove from lookup so we don't process again in this batch
                 del holds_by_number[sms_number_clean]
 
                 # Extract SMS details
                 sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
-                sms_range = escape_html(strip_html_tags(str(msg[1]))) if len(msg) > 1 and msg[1] else "N/A"
                 sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
                 sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
+                masked_number = mask_phone_number(hold.phone_number_str)
 
-                # Build group message
-                username_display = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+                # Build group message with only required fields
                 group_message = (
-                    f"📱 <b>New SMS Received!</b>\n\n"
-                    f"📞 <b>Number:</b> <code>{escape_html(hold.phone_number_str)}</code>\n"
-                    f"👤 <b>User:</b> {escape_html(username_display)}\n"
-                    f"📋 <b>Range:</b> {sms_range}\n"
-                    f"🕒 <b>Time:</b> {sms_time}\n"
                     f"📨 <b>From:</b> {sms_sender}\n"
-                    f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>\n\n"
-                    f"{balance_info}"
+                    f"🕒 <b>Time:</b> {sms_time}\n"
+                    f"📞 <b>Number:</b> <code>{escape_html(masked_number)}</code>\n"
+                    f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
                 )
 
                 # Post to private group
