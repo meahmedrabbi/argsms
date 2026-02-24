@@ -2,7 +2,8 @@
 
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text, UniqueConstraint
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from dotenv import load_dotenv
@@ -626,3 +627,54 @@ def set_range_price(db_session, range_unique_id, range_name, price, admin_user):
     
     db_session.commit()
     return price_range
+
+
+class SmsRecord(Base):
+    """Persistent record of every SMS posted to the group, used for deduplication."""
+    __tablename__ = 'sms_records'
+
+    id = Column(Integer, primary_key=True)
+    phone_number = Column(String(50), nullable=False, index=True)
+    sms_time = Column(String(100), nullable=False)
+    sender = Column(String(255), nullable=False)
+    body = Column(Text, nullable=True)
+    posted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('phone_number', 'sms_time', 'sender', name='uq_sms_record'),
+    )
+
+    def __repr__(self):
+        return f"<SmsRecord(phone_number={self.phone_number}, sms_time={self.sms_time}, sender={self.sender})>"
+
+
+def is_sms_already_posted(db_session, phone_number, sms_time, sender):
+    """Return True if an SMS with this (phone_number, sms_time, sender) was already posted."""
+    return db_session.query(SmsRecord).filter_by(
+        phone_number=str(phone_number),
+        sms_time=str(sms_time),
+        sender=str(sender)
+    ).first() is not None
+
+
+def record_sms_posted(db_session, phone_number, sms_time, sender, body=None):
+    """Persist a record of a posted SMS for future deduplication.
+
+    Uses the database unique constraint as the authoritative guard so the
+    operation is atomic even if two cycles run concurrently.
+
+    Returns True if the record was newly inserted, False if it already existed.
+    """
+    record = SmsRecord(
+        phone_number=str(phone_number),
+        sms_time=str(sms_time),
+        sender=str(sender),
+        body=body
+    )
+    try:
+        db_session.add(record)
+        db_session.commit()
+        return True
+    except IntegrityError:
+        db_session.rollback()
+        return False

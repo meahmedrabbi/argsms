@@ -41,6 +41,8 @@ from database import (
     cleanup_expired_holds,
     update_first_retry_time,
     get_all_active_holds,
+    is_sms_already_posted,
+    record_sms_posted,
     User,
     NumberHold,
     PriceRange,
@@ -2880,14 +2882,6 @@ def normalize_phone_number(number):
     return re.sub(r'[^\d]', '', str(number))
 
 
-# In-memory set to avoid re-posting the same unmatched SMS every poll cycle.
-# Key: (normalized_number, sms_time_str, sms_sender_str).
-# Capped at _POSTED_SMS_KEYS_MAX entries; cleared when the cap is reached to
-# prevent unbounded memory growth during long-running sessions.
-_posted_sms_keys: set = set()
-_POSTED_SMS_KEYS_MAX = 10_000
-
-
 def mask_phone_number(number):
     """Mask a phone number showing only first 3 and last 4 digits."""
     clean = re.sub(r'[^\d]', '', str(number)) if number else ""
@@ -2950,26 +2944,26 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
             if not sms_number_clean:
                 continue
 
+            # Build clean dedup fields (strip HTML so keys are stable)
+            sms_time_clean = strip_html_tags(str(msg[0]).strip()) if msg[0] else ""
+            sms_sender_clean = strip_html_tags(str(msg[3]).strip()) if len(msg) > 3 and msg[3] else ""
+            sms_body_clean = strip_html_tags(str(msg[5])) if len(msg) > 5 and msg[5] else ""
+
+            # Persistent dedup check — covers both in-cycle duplicates and
+            # re-posts after a bot restart.
+            if is_sms_already_posted(db, sms_number_clean, sms_time_clean, sms_sender_clean):
+                continue
+
             # Check if this number matches any active hold
             hold = holds_by_number.get(sms_number_clean)
 
-            # Build a dedup key from number + timestamp + sender so we never
-            # post the same unmatched SMS twice across consecutive poll cycles.
-            # Including sender guards against false collisions when the
-            # timestamp field is absent.
-            sms_time_raw = str(msg[0]).strip() if msg[0] else ""
-            sms_sender_raw = str(msg[3]).strip() if len(msg) > 3 and msg[3] else ""
-            sms_key = (sms_number_clean, sms_time_raw, sms_sender_raw)
-
             if not hold:
                 # Number is not held by any user — post to group without
-                # deducting balance, but only if not already posted.
-                if sms_key in _posted_sms_keys:
-                    continue
+                # deducting balance.
                 try:
-                    sms_time = escape_html(strip_html_tags(sms_time_raw))
-                    sms_sender = escape_html(strip_html_tags(sms_sender_raw)) if sms_sender_raw else "Unknown"
-                    sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
+                    sms_time = escape_html(sms_time_clean) if sms_time_clean else "N/A"
+                    sms_sender = escape_html(sms_sender_clean) if sms_sender_clean else "Unknown"
+                    sms_body = escape_html(sms_body_clean) if sms_body_clean else "(empty)"
                     group_message = (
                         f"📨 <b>From:</b> {sms_sender}\n"
                         f"🕒 <b>Time:</b> {sms_time}\n"
@@ -2981,9 +2975,7 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                         text=group_message,
                         parse_mode='HTML'
                     )
-                    if len(_posted_sms_keys) >= _POSTED_SMS_KEYS_MAX:
-                        _posted_sms_keys.clear()
-                    _posted_sms_keys.add(sms_key)
+                    record_sms_posted(db, sms_number_clean, sms_time_clean, sms_sender_clean, sms_body_clean)
                     logger.info(f"Auto-SMS: Posted unmatched SMS for {sms_number_clean}")
                 except Exception as e:
                     logger.error(f"Auto-SMS: Failed to post unmatched SMS to group: {e}")
@@ -3020,10 +3012,10 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                 # Remove from lookup so we don't process again in this batch
                 del holds_by_number[sms_number_clean]
 
-                # Extract SMS details
-                sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
-                sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
-                sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
+                # Extract SMS details for Telegram message
+                sms_time = escape_html(sms_time_clean) if sms_time_clean else "N/A"
+                sms_sender = escape_html(sms_sender_clean) if sms_sender_clean else "Unknown"
+                sms_body = escape_html(sms_body_clean) if sms_body_clean else "(empty)"
                 masked_number = mask_phone_number(hold.phone_number_str)
 
                 # Build group message with only required fields
@@ -3034,13 +3026,14 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                     f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
                 )
 
-                # Post to private group
+                # Post to private group then record for dedup
                 try:
                     await context.bot.send_message(
                         chat_id=SMS_GROUP_CHAT_ID,
                         text=group_message,
                         parse_mode='HTML'
                     )
+                    record_sms_posted(db, sms_number_clean, sms_time_clean, sms_sender_clean, sms_body_clean)
                     logger.info(f"Auto-SMS: Posted SMS for {hold.phone_number_str} (user {user.telegram_id})")
                 except Exception as e:
                     logger.error(f"Auto-SMS: Failed to post to group: {e}")
