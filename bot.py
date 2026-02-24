@@ -2915,96 +2915,111 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
         if not holds_by_number:
             return
 
-        # Fetch all recent SMS from server
+        # Fetch all recent SMS from server, paginating until every record is seen
+        # or every active hold has been matched.
         scrapper = get_scrapper_session()
-        data = scrapper.get_all_recent_sms()
+        batch_size = 500
+        start = 0
 
-        if not data:
-            return
+        while holds_by_number:
+            data = scrapper.get_all_recent_sms(start=start, length=batch_size)
+            if not data:
+                break
 
-        messages = data.get('aaData', [])
-        if not messages:
-            return
+            messages = data.get('aaData', [])
+            if not messages:
+                break
 
-        # Process each SMS message
-        for msg in messages:
-            if not isinstance(msg, list) or len(msg) < 6:
-                continue
-
-            # Skip stats rows
-            if is_stats_row(msg):
-                continue
-
-            # Extract the phone number from the SMS record (column index 2)
-            sms_number_raw = msg[2] if len(msg) > 2 else ""
-            sms_number_clean = normalize_phone_number(strip_html_tags(str(sms_number_raw)))
-
-            if not sms_number_clean:
-                continue
-
-            # Check if this number matches any active hold
-            hold = holds_by_number.get(sms_number_clean)
-            if not hold:
-                continue
-
-            # Found a match! Process it
+            total_records = data.get('iTotalRecords', 0)
             try:
-                # Get the user who holds this number
-                user = db.get(User, hold.user_id)
-                if not user:
+                total_records = int(total_records)
+            except (ValueError, TypeError):
+                total_records = 0
+
+            # Process each SMS message in this batch
+            for msg in messages:
+                if not isinstance(msg, list) or len(msg) < 6:
                     continue
 
-                # Use the rate from the API response (column index 7)
+                # Skip stats rows
+                if is_stats_row(msg):
+                    continue
+
+                # Extract the phone number from the SMS record (column index 2)
+                sms_number_raw = msg[2] if len(msg) > 2 else ""
+                sms_number_clean = normalize_phone_number(strip_html_tags(str(sms_number_raw)))
+
+                if not sms_number_clean:
+                    continue
+
+                # Check if this number matches any active hold
+                hold = holds_by_number.get(sms_number_clean)
+                if not hold:
+                    continue
+
+                # Found a match! Process it
                 try:
-                    price = float(msg[7]) if len(msg) > 7 and msg[7] is not None else 0.0
-                except (ValueError, TypeError):
-                    price = 0.0
-                if price < 0:
-                    price = 0.0
+                    # Get the user who holds this number
+                    user = db.get(User, hold.user_id)
+                    if not user:
+                        continue
 
-                # Deduct balance
-                new_balance = deduct_user_balance(
-                    db, user, price,
-                    transaction_type='sms_charge',
-                    description=f"SMS received on {hold.phone_number_str}"
-                )
+                    # Use the rate from the API response (column index 7)
+                    try:
+                        price = float(msg[7]) if len(msg) > 7 and msg[7] is not None else 0.0
+                    except (ValueError, TypeError):
+                        price = 0.0
+                    if price < 0:
+                        price = 0.0
 
-                if new_balance is not None:
-                    # Mark as permanent hold only after successful balance deduction
-                    mark_number_permanent(db, user, hold.phone_number_str)
-                else:
-                    logger.warning(f"Auto-SMS: Insufficient balance for user {user.telegram_id}")
-
-                # Remove from lookup so we don't process again in this batch
-                del holds_by_number[sms_number_clean]
-
-                # Extract SMS details
-                sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
-                sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
-                sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
-                masked_number = mask_phone_number(hold.phone_number_str)
-
-                # Build group message with only required fields
-                group_message = (
-                    f"📨 <b>From:</b> {sms_sender}\n"
-                    f"🕒 <b>Time:</b> {sms_time}\n"
-                    f"📞 <b>Number:</b> <code>{escape_html(masked_number)}</code>\n"
-                    f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
-                )
-
-                # Post to private group
-                try:
-                    await context.bot.send_message(
-                        chat_id=SMS_GROUP_CHAT_ID,
-                        text=group_message,
-                        parse_mode='HTML'
+                    # Deduct balance
+                    new_balance = deduct_user_balance(
+                        db, user, price,
+                        transaction_type='sms_charge',
+                        description=f"SMS received on {hold.phone_number_str}"
                     )
-                    logger.info(f"Auto-SMS: Posted SMS for {hold.phone_number_str} (user {user.telegram_id})")
-                except Exception as e:
-                    logger.error(f"Auto-SMS: Failed to post to group: {e}")
 
-            except Exception as e:
-                logger.error(f"Auto-SMS: Error processing hold {hold.id}: {e}")
+                    if new_balance is not None:
+                        # Mark as permanent hold only after successful balance deduction
+                        mark_number_permanent(db, user, hold.phone_number_str)
+                    else:
+                        logger.warning(f"Auto-SMS: Insufficient balance for user {user.telegram_id}")
+
+                    # Remove from lookup so we don't process again in this batch
+                    del holds_by_number[sms_number_clean]
+
+                    # Extract SMS details
+                    sms_time = escape_html(strip_html_tags(str(msg[0]))) if msg[0] else "N/A"
+                    sms_sender = escape_html(strip_html_tags(str(msg[3]))) if len(msg) > 3 and msg[3] else "Unknown"
+                    sms_body = escape_html(strip_html_tags(str(msg[5]))) if len(msg) > 5 and msg[5] else "(empty)"
+                    masked_number = mask_phone_number(hold.phone_number_str)
+
+                    # Build group message with only required fields
+                    group_message = (
+                        f"📨 <b>From:</b> {sms_sender}\n"
+                        f"🕒 <b>Time:</b> {sms_time}\n"
+                        f"📞 <b>Number:</b> <code>{escape_html(masked_number)}</code>\n"
+                        f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
+                    )
+
+                    # Post to private group
+                    try:
+                        await context.bot.send_message(
+                            chat_id=SMS_GROUP_CHAT_ID,
+                            text=group_message,
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"Auto-SMS: Posted SMS for {hold.phone_number_str} (user {user.telegram_id})")
+                    except Exception as e:
+                        logger.error(f"Auto-SMS: Failed to post to group: {e}")
+
+                except Exception as e:
+                    logger.error(f"Auto-SMS: Error processing hold {hold.id}: {e}")
+
+            # Advance the pagination cursor; stop when all records have been seen.
+            start += len(messages)
+            if start >= total_records or len(messages) < batch_size:
+                break
 
     except Exception as e:
         logger.error(f"Auto-SMS job error: {e}")
