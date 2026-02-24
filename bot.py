@@ -2889,11 +2889,11 @@ _POSTED_SMS_KEYS_MAX = 10_000
 
 
 def mask_phone_number(number):
-    """Mask a phone number showing only first 3 and last 3 digits."""
+    """Mask a phone number showing only first 3 and last 4 digits."""
     clean = re.sub(r'[^\d]', '', str(number)) if number else ""
-    if len(clean) <= 6:
+    if len(clean) <= 7:
         return clean
-    return clean[:3] + '*' * (len(clean) - 6) + clean[-3:]
+    return clean[:3] + '*' * (len(clean) - 7) + clean[-4:]
 
 
 async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
@@ -2973,7 +2973,7 @@ async def auto_fetch_sms_job(context: ContextTypes.DEFAULT_TYPE):
                     group_message = (
                         f"📨 <b>From:</b> {sms_sender}\n"
                         f"🕒 <b>Time:</b> {sms_time}\n"
-                        f"📞 <b>Number:</b> <code>{escape_html(sms_number_clean)}</code>\n"
+                        f"📞 <b>Number:</b> <code>{escape_html(mask_phone_number(sms_number_clean))}</code>\n"
                         f"💬 <b>Message:</b>\n<pre>{sms_body}</pre>"
                     )
                     await context.bot.send_message(
